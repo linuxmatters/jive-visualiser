@@ -179,8 +179,6 @@ func main() {
 	channels := CLI.Channels
 	noPreview := CLI.NoPreview
 
-	_ = ctx // ctx is not needed past argument parsing
-
 	// Generate video using 2-pass streaming approach
 	generateVideo(inputFile, outputFile, channels, noPreview, hwAccelType, runtimeConfig, CLI.Title, CLI.Episode)
 }
