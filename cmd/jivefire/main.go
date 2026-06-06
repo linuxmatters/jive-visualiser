@@ -186,16 +186,16 @@ func main() {
 	_ = ctx // ctx is not needed past argument parsing
 
 	// Generate video using 2-pass streaming approach
-	generateVideo(inputFile, outputFile, channels, noPreview, hwAccelType, runtimeConfig)
+	generateVideo(inputFile, outputFile, channels, noPreview, hwAccelType, runtimeConfig, CLI.Title, CLI.Episode)
 }
 
-func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig) {
+func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, title string, episode int) {
 	// Track overall timing from the very start
 	overallStartTime := time.Now()
 
 	thumbnailPath := strings.Replace(outputFile, ".mp4", ".png", 1)
 	thumbnailStartTime := time.Now()
-	if err := renderer.GenerateThumbnail(thumbnailPath, CLI.Title, runtimeConfig); err != nil {
+	if err := renderer.GenerateThumbnail(thumbnailPath, title, runtimeConfig); err != nil {
 		cli.PrintError(fmt.Sprintf("failed to generate thumbnail: %v", err))
 		os.Exit(1)
 	}
@@ -256,7 +256,7 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 		})
 
 		// === PASS 2: Rendering & Encoding ===
-		runPass2(p, inputFile, outputFile, channels, noPreview, hwAccel, runtimeConfig, profile, thumbnailDuration, overallStartTime)
+		runPass2(p, inputFile, outputFile, channels, noPreview, hwAccel, runtimeConfig, profile, thumbnailDuration, overallStartTime, title, episode)
 	}()
 
 	// Run the unified Bubbletea UI (uses alternate screen buffer)
@@ -280,7 +280,7 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 	}
 }
 
-func runPass2(p *tea.Program, inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, profile *audio.Profile, thumbnailDuration time.Duration, overallStartTime time.Time) {
+func runPass2(p *tea.Program, inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, profile *audio.Profile, thumbnailDuration time.Duration, overallStartTime time.Time, title string, episode int) {
 	// Open streaming reader for Pass 2
 	reader, err := audio.NewStreamingReader(inputFile)
 	if err != nil {
@@ -329,7 +329,7 @@ func runPass2(p *tea.Program, inputFile string, outputFile string, channels int,
 
 	// Create audio processor and frame renderer
 	processor := audio.NewProcessor()
-	frame := renderer.NewFrame(bgImage, fontFace, CLI.Episode, CLI.Title, runtimeConfig)
+	frame := renderer.NewFrame(bgImage, fontFace, episode, title, runtimeConfig)
 
 	// Calculate frames from profile
 	numFrames := profile.NumFrames
