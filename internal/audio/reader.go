@@ -196,14 +196,16 @@ func unsafeByteSlice(ptr unsafe.Pointer, length int) []byte {
 // decodeS16 decodes a signed 16-bit little-endian sample at byte offset i,
 // normalised to [-1.0, 1.0].
 func decodeS16(buf []byte, i int) float64 {
-	val := int16(binary.LittleEndian.Uint16(buf[i:]))
+	// Same-width two's-complement reinterpretation, not a narrowing conversion.
+	val := int16(binary.LittleEndian.Uint16(buf[i:])) //nolint:gosec
 	return float64(val) / 32768.0
 }
 
 // decodeS32 decodes a signed 32-bit little-endian sample at byte offset i,
 // normalised to [-1.0, 1.0].
 func decodeS32(buf []byte, i int) float64 {
-	val := int32(binary.LittleEndian.Uint32(buf[i:]))
+	// Same-width two's-complement reinterpretation, not a narrowing conversion.
+	val := int32(binary.LittleEndian.Uint32(buf[i:])) //nolint:gosec
 	return float64(val) / 2147483648.0
 }
 
@@ -231,7 +233,8 @@ func sampleDecoder(sampleFormat ffmpeg.AVSampleFormat) (func([]byte, int) float6
 // Stereo is automatically downmixed to mono.
 func (d *StreamingReader) extractSamples() ([]float64, error) {
 	nbSamples := d.frame.NbSamples()
-	sampleFormat := ffmpeg.AVSampleFormat(d.frame.Format())
+	// Frame format is always a valid AVSampleFormat enum, within int32 range.
+	sampleFormat := ffmpeg.AVSampleFormat(d.frame.Format()) //nolint:gosec
 	channels := d.channels
 
 	decode, bps, err := sampleDecoder(sampleFormat)
