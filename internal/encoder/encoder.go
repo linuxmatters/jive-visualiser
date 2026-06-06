@@ -105,6 +105,11 @@ func (f *AudioFIFO) Available() int {
 	return len(f.buffer)
 }
 
+// FrameSize returns the configured samples per frame (encoderFrameSize × channels)
+func (f *AudioFIFO) FrameSize() int {
+	return f.frameSize
+}
+
 // Encoder wraps FFmpeg encoding functionality
 type Encoder struct {
 	config Config
@@ -800,7 +805,7 @@ func (e *Encoder) WriteAudioSamples(samples []float32) error {
 	e.audioFIFO.Push(samples)
 
 	// Process all complete frames in FIFO
-	samplesPerFrame := encoderFrameSize * outputChannels
+	samplesPerFrame := e.audioFIFO.FrameSize()
 	for e.audioFIFO.Available() >= samplesPerFrame {
 		// Pop exactly one encoder frame worth of samples (pooled for AAC sizes)
 		frameSamples := e.audioFIFO.Pop(samplesPerFrame)
@@ -873,7 +878,7 @@ func (e *Encoder) FlushAudioEncoder() error {
 	outputChannels := e.outputChannels()
 
 	// Process any remaining samples in FIFO (may be partial frame)
-	samplesPerFrame := encoderFrameSize * outputChannels
+	samplesPerFrame := e.audioFIFO.FrameSize()
 	remaining := e.audioFIFO.Available()
 	if remaining > 0 {
 		// Pad with zeros to make a complete frame
