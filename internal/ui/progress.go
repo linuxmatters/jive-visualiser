@@ -3,13 +3,14 @@ package ui
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"math"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/progress"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/linuxmatters/jivefire/internal/config"
 	"github.com/linuxmatters/jivefire/internal/theme"
 )
@@ -122,14 +123,14 @@ type Model struct {
 func NewModel(noPreview bool) *Model {
 	// Fire gradient: deep red → orange → yellow
 	p := progress.New(
-		progress.WithGradient(string(theme.FireCrimson), string(theme.FireYellow)),
+		progress.WithColors(theme.FireCrimson, theme.FireYellow),
 		progress.WithWidth(40),
 		progress.WithoutPercentage(),
 	)
 
 	// Smaller progress bar for summary performance charts
 	summaryBar := progress.New(
-		progress.WithGradient(string(theme.FireCrimson), string(theme.FireYellow)),
+		progress.WithColors(theme.FireCrimson, theme.FireYellow),
 		progress.WithWidth(30),
 		progress.WithoutPercentage(),
 	)
@@ -156,7 +157,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.progressBar.Width = min(msg.Width-30, 50)
+		m.progressBar.SetWidth(min(msg.Width-30, 50))
 		return m, nil
 
 	case AnalysisProgress:
@@ -195,7 +196,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case progressQuitMsg:
 		return m, tea.Quit
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.complete != nil {
 			return m, tea.Quit
 		}
@@ -208,11 +209,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the UI
-func (m *Model) View() string {
+func (m *Model) View() tea.View {
+	var content string
 	if m.phase == PhaseComplete {
-		return m.renderFinalProgress() + "\n" + m.renderComplete()
+		content = m.renderFinalProgress() + "\n" + m.renderComplete()
+	} else {
+		content = m.renderProgress()
 	}
-	return m.renderProgress()
+
+	// Alternate screen buffer prevents ghost box edges when the view height
+	// changes between passes (replaces v1 tea.WithAltScreen()).
+	v := tea.NewView(content)
+	v.AltScreen = true
+	return v
 }
 
 // CompletionSummary returns the final completion summary for printing after alt screen exits.
@@ -641,7 +650,7 @@ func renderSpectrum(barHeights []float64, width int) string {
 	// Eight-step gradient expanded from the four base theme colours (FireCrimson,
 	// FireRed, FireOrange, FireYellow). The intermediate stops give the spectrum
 	// finer colour fidelity than the four base colours alone.
-	fireColors := []lipgloss.Color{
+	fireColors := []color.Color{
 		lipgloss.Color("#8B0000"), // Dark red (ember)
 		lipgloss.Color("#B22222"), // Firebrick
 		lipgloss.Color("#DC143C"), // Crimson
