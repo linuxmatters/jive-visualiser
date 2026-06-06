@@ -38,7 +38,6 @@ type Config struct {
 // AudioFIFO provides a simple FIFO buffer for audio samples with pooled slice allocation.
 type AudioFIFO struct {
 	buffer    []float32
-	size      int
 	frameSize int        // Samples per frame (e.g., 1024 for mono AAC, 2048 for stereo)
 	pool      *sync.Pool // Pooled slices for this frame size
 }
@@ -61,7 +60,6 @@ func NewAudioFIFO(frameSize int) *AudioFIFO {
 // Push adds samples to the FIFO
 func (f *AudioFIFO) Push(samples []float32) {
 	f.buffer = append(f.buffer, samples...)
-	f.size = len(f.buffer)
 }
 
 // Pop removes and returns the requested number of samples.
@@ -69,7 +67,7 @@ func (f *AudioFIFO) Push(samples []float32) {
 // For the configured frame size, returns a pooled slice.
 // Caller MUST call ReturnSlice() when done to return it to the pool.
 func (f *AudioFIFO) Pop(count int) []float32 {
-	if f.size < count {
+	if len(f.buffer) < count {
 		return nil
 	}
 
@@ -87,8 +85,7 @@ func (f *AudioFIFO) Pop(count int) []float32 {
 
 	// Shift remaining samples
 	copy(f.buffer, f.buffer[count:])
-	f.buffer = f.buffer[:f.size-count]
-	f.size -= count
+	f.buffer = f.buffer[:len(f.buffer)-count]
 
 	return result
 }
@@ -105,7 +102,7 @@ func (f *AudioFIFO) ReturnSlice(s []float32) {
 
 // Available returns the number of samples in the buffer
 func (f *AudioFIFO) Available() int {
-	return f.size
+	return len(f.buffer)
 }
 
 // Encoder wraps FFmpeg encoding functionality
