@@ -622,8 +622,9 @@ func (e *Encoder) WriteFrameRGBA(rgbaData []byte) error {
 		return e.writeFrameRGBADirect(rgbaData)
 	}
 
-	// For Vulkan/QSV/VAAPI/VideoToolbox, convert RGBA→NV12 then upload to GPU
-	if e.hwEncoder != nil && (e.hwEncoder.Type == HWAccelVulkan || e.hwEncoder.Type == HWAccelQSV || e.hwEncoder.Type == HWAccelVAAPI || e.hwEncoder.Type == HWAccelVideoToolbox) {
+	// For Vulkan/QSV/VAAPI/VideoToolbox, convert RGBA→NV12 then upload to GPU;
+	// configurePixelFormat sets NV12 for exactly those hardware encoders.
+	if e.inputPixFmt == ffmpeg.AVPixFmtNv12 {
 		return e.writeFrameHWUpload(rgbaData)
 	}
 
