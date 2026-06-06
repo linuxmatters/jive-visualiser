@@ -8,19 +8,16 @@ import (
 	"github.com/linuxmatters/jivefire/internal/config"
 )
 
-// BinFFT bins FFT coefficients into bars and returns normalized values (0.0-1.0)
-// CAVA-style approach: work in normalized space, apply maxBarHeight scaling later
-// baseScale is calculated from Pass 1 analysis for optimal visualization
-// result buffer is provided by caller to avoid allocations
-func BinFFT(coeffs []complex128, sensitivity float64, baseScale float64, result []float64) {
+// binRawMagnitudes bins FFT coefficients into per-bar raw average magnitudes.
+// It writes config.NumBars values into result. The spectrum runs up to the
+// Nyquist frequency (~22kHz at 44.1kHz) to capture cymbals, hi-hats, and the
+// musical "air" in stings and bumpers. Each bar averages cmplx.Abs over its
+// frequency range, dividing by binsPerBar. Callers apply any normalisation on
+// top of these raw values.
+func binRawMagnitudes(coeffs []complex128, result []float64) {
 	// Use only first half (positive frequencies)
 	halfSize := len(coeffs) / 2
-
-	// Use full spectrum up to Nyquist frequency (~22kHz at 44.1kHz sample rate)
-	// This captures the complete audible range including high-frequency content
-	// from cymbals, hi-hats, and musical "air" in stings and bumpers
 	maxFreqBin := halfSize
-
 	binsPerBar := maxFreqBin / config.NumBars
 
 	for bar := range config.NumBars {
@@ -37,6 +34,15 @@ func BinFFT(coeffs []complex128, sensitivity float64, baseScale float64, result 
 
 		result[bar] = sum / float64(binsPerBar)
 	}
+}
+
+// BinFFT bins FFT coefficients into bars and returns normalized values (0.0-1.0)
+// CAVA-style approach: work in normalized space, apply maxBarHeight scaling later
+// baseScale is calculated from Pass 1 analysis for optimal visualization
+// result buffer is provided by caller to avoid allocations
+func BinFFT(coeffs []complex128, sensitivity float64, baseScale float64, result []float64) {
+	// Raw per-bar average magnitudes; normalisation is applied on top below
+	binRawMagnitudes(coeffs, result)
 
 	// CAVA-style processing: apply sensitivity, then normalize to 0.0-1.0 range
 	// baseScale provided from Pass 1 analysis: OptimalBaseScale = 0.85 / GlobalPeak
