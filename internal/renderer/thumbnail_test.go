@@ -39,7 +39,7 @@ func TestGenerateSampleThumbnail(t *testing.T) {
 			outputPath := filepath.Join("../../testdata", tc.outputName)
 
 			// Generate thumbnail
-			err := GenerateThumbnail(outputPath, tc.title, runtimeConfig)
+			err := GenerateThumbnail(outputPath, PodcastMeta{Title: tc.title}, runtimeConfig)
 			if err != nil {
 				t.Fatalf("failed to generate thumbnail: %v", err)
 			}

@@ -179,17 +179,19 @@ func main() {
 	channels := CLI.Channels
 	noPreview := CLI.NoPreview
 
+	meta := renderer.PodcastMeta{Title: CLI.Title, Episode: CLI.Episode}
+
 	// Generate video using 2-pass streaming approach
-	generateVideo(inputFile, outputFile, channels, noPreview, hwAccelType, runtimeConfig, CLI.Title, CLI.Episode)
+	generateVideo(inputFile, outputFile, channels, noPreview, hwAccelType, runtimeConfig, meta)
 }
 
-func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, title string, episode int) {
+func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, meta renderer.PodcastMeta) {
 	// Track overall timing from the very start
 	overallStartTime := time.Now()
 
 	thumbnailPath := strings.Replace(outputFile, ".mp4", ".png", 1)
 	thumbnailStartTime := time.Now()
-	if err := renderer.GenerateThumbnail(thumbnailPath, title, runtimeConfig); err != nil {
+	if err := renderer.GenerateThumbnail(thumbnailPath, meta, runtimeConfig); err != nil {
 		cli.PrintError(fmt.Sprintf("failed to generate thumbnail: %v", err))
 		os.Exit(1)
 	}
@@ -257,8 +259,7 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 			noPreview:         noPreview,
 			hwAccel:           hwAccel,
 			runtimeConfig:     runtimeConfig,
-			title:             title,
-			episode:           episode,
+			meta:              meta,
 			thumbnailDuration: thumbnailDuration,
 			overallStartTime:  overallStartTime,
 		})
@@ -294,8 +295,7 @@ type pass2Config struct {
 	noPreview         bool
 	hwAccel           encoder.HWAccelType
 	runtimeConfig     *config.RuntimeConfig
-	title             string
-	episode           int
+	meta              renderer.PodcastMeta
 	thumbnailDuration time.Duration
 	overallStartTime  time.Time
 }
@@ -349,7 +349,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 
 	// Create audio processor and frame renderer
 	processor := audio.NewProcessor()
-	frame := renderer.NewFrame(bgImage, fontFace, cfg.episode, cfg.title, cfg.runtimeConfig)
+	frame := renderer.NewFrame(bgImage, fontFace, cfg.meta, cfg.runtimeConfig)
 
 	// Calculate frames from profile
 	numFrames := profile.NumFrames

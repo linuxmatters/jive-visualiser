@@ -31,7 +31,7 @@ func BenchmarkFrameWithBackground(b *testing.B) {
 	}
 
 	runtimeConfig := &config.RuntimeConfig{}
-	frame := NewFrame(bgImage, nil, 0, "", runtimeConfig)
+	frame := NewFrame(bgImage, nil, PodcastMeta{}, runtimeConfig)
 	barHeights := generateTestBarHeights()
 
 	b.ResetTimer()
@@ -44,7 +44,7 @@ func BenchmarkFrameWithBackground(b *testing.B) {
 func BenchmarkFrameNoBackground(b *testing.B) {
 	// Setup - no background
 	runtimeConfig := &config.RuntimeConfig{}
-	frame := NewFrame(nil, nil, 0, "", runtimeConfig)
+	frame := NewFrame(nil, nil, PodcastMeta{}, runtimeConfig)
 	barHeights := generateTestBarHeights()
 
 	b.ResetTimer()
@@ -59,7 +59,7 @@ func BenchmarkFrameWithText(b *testing.B) {
 	bgImage := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
 	fontFace := basicfont.Face7x13
 	runtimeConfig := &config.RuntimeConfig{}
-	frame := NewFrame(bgImage, fontFace, 1, "Test Episode", runtimeConfig)
+	frame := NewFrame(bgImage, fontFace, PodcastMeta{Title: "Test Episode", Episode: 1}, runtimeConfig)
 	barHeights := generateTestBarHeights()
 
 	b.ResetTimer()
@@ -84,7 +84,7 @@ func TestFrameRendering(t *testing.T) {
 
 	fontFace := basicfont.Face7x13
 	runtimeConfig := &config.RuntimeConfig{}
-	frame := NewFrame(bgImage, fontFace, 42, "Linux Matters", runtimeConfig)
+	frame := NewFrame(bgImage, fontFace, PodcastMeta{Title: "Linux Matters", Episode: 42}, runtimeConfig)
 
 	// Test with various bar heights
 	barHeights := generateTestBarHeights()

@@ -9,6 +9,12 @@ import (
 	"golang.org/x/image/font"
 )
 
+// PodcastMeta bundles the episode metadata shown on a frame and thumbnail.
+type PodcastMeta struct {
+	Title   string
+	Episode int
+}
+
 // Frame represents a single video frame with visualization bars
 type Frame struct {
 	img        *image.RGBA
@@ -32,7 +38,7 @@ type Frame struct {
 }
 
 // NewFrame creates a new optimized frame renderer
-func NewFrame(bgImage *image.RGBA, fontFace font.Face, episodeNum int, title string, runtimeConfig *config.RuntimeConfig) *Frame {
+func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtimeConfig *config.RuntimeConfig) *Frame {
 	totalWidth := config.NumBars*config.BarWidth + (config.NumBars-1)*config.BarGap
 	startX := (config.Width - totalWidth) / 2
 	centerY := config.Height / 2
@@ -75,8 +81,8 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, episodeNum int, title str
 
 	// Format episode number as two-digit string
 	episodeStr := "00"
-	if episodeNum > 0 {
-		episodeStr = formatEpisodeNumber(episodeNum)
+	if meta.Episode > 0 {
+		episodeStr = formatEpisodeNumber(meta.Episode)
 	}
 
 	f := &Frame{
@@ -87,7 +93,7 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, episodeNum int, title str
 		startX:          startX,
 		totalWidth:      totalWidth,
 		episodeNum:      episodeStr,
-		title:           title,
+		title:           meta.Title,
 		textColor:       color.RGBA{R: textR, G: textG, B: textB, A: 255},
 		maxBarHeight:    maxBarHeight,
 		intensityTable:  intensityTable,

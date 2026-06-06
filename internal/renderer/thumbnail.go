@@ -26,7 +26,7 @@ func getThumbnailTextColor(runtimeConfig *config.RuntimeConfig) color.RGBA {
 
 // GenerateThumbnail creates a YouTube thumbnail with the title text overlaid
 // The thumbnail is the same resolution as the video (1280x720)
-func GenerateThumbnail(outputPath string, title string, runtimeConfig *config.RuntimeConfig) error {
+func GenerateThumbnail(outputPath string, meta PodcastMeta, runtimeConfig *config.RuntimeConfig) error {
 	// Load the thumbnail background image
 	thumbImg, err := loadThumbnailBackground(runtimeConfig)
 	if err != nil {
@@ -45,7 +45,7 @@ func GenerateThumbnail(outputPath string, title string, runtimeConfig *config.Ru
 	}
 
 	// Split title into 2 lines
-	line1, line2 := splitTitle(title)
+	line1, line2 := splitTitle(meta.Title)
 
 	// Find the largest font size that fits within constraints
 	fontSize := findOptimalFontSize(parsedFont, line1, line2)
