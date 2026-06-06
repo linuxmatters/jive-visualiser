@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/cmplx"
 	"time"
 
 	"github.com/linuxmatters/jivefire/internal/config"
@@ -174,29 +173,16 @@ func analyzeFrame(coeffs []complex128, audioChunk []float64, barMagnitudes []flo
 	}
 	analysis.RMSLevel = math.Sqrt(sumSquares / float64(len(audioChunk)))
 
-	// Analyse frequency bins (same logic as BinFFT)
-	// Use full spectrum up to Nyquist frequency for complete frequency coverage
-	halfSize := len(coeffs) / 2
-	maxFreqBin := halfSize
-	binsPerBar := maxFreqBin / config.NumBars
+	// Bin frequencies into per-bar raw average magnitudes (shared with BinFFT).
+	// Write into the caller's buffer when supplied; otherwise use a local scratch.
+	bins := barMagnitudes
+	if bins == nil {
+		bins = make([]float64, config.NumBars)
+	}
+	binRawMagnitudes(coeffs, bins)
 
-	for bar := range config.NumBars {
-		start := bar * binsPerBar
-		end := start + binsPerBar
-		end = min(end, maxFreqBin)
-
-		var sum float64
-		for i := start; i < end; i++ {
-			magnitude := cmplx.Abs(coeffs[i])
-			sum += magnitude
-		}
-
-		avgMagnitude := sum / float64(binsPerBar)
-		if barMagnitudes != nil {
-			barMagnitudes[bar] = avgMagnitude
-		}
-
-		// Track peak
+	// Track peak across raw bar magnitudes
+	for _, avgMagnitude := range bins {
 		if avgMagnitude > analysis.PeakMagnitude {
 			analysis.PeakMagnitude = avgMagnitude
 		}
