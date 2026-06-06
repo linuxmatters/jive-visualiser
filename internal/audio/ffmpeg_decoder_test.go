@@ -3,6 +3,8 @@ package audio
 import (
 	"math"
 	"testing"
+
+	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
 )
 
 func TestDecodeS16(t *testing.T) {
@@ -90,17 +92,24 @@ func TestDecodeF32WithOffset(t *testing.T) {
 }
 
 func TestSampleDecoder(t *testing.T) {
-	validFormats := []int{1, 2, 3, 6, 7, 8}
-	for _, fmt := range validFormats {
-		fn, bps, err := sampleDecoder(fmt)
+	validFormats := []ffmpeg.AVSampleFormat{
+		ffmpeg.AVSampleFmtS16,
+		ffmpeg.AVSampleFmtS32,
+		ffmpeg.AVSampleFmtFlt,
+		ffmpeg.AVSampleFmtS16P,
+		ffmpeg.AVSampleFmtS32P,
+		ffmpeg.AVSampleFmtFltp,
+	}
+	for _, format := range validFormats {
+		fn, bps, err := sampleDecoder(format)
 		if err != nil {
-			t.Errorf("sampleDecoder(%d) returned error: %v", fmt, err)
+			t.Errorf("sampleDecoder(%d) returned error: %v", format, err)
 		}
 		if fn == nil {
-			t.Errorf("sampleDecoder(%d) returned nil function", fmt)
+			t.Errorf("sampleDecoder(%d) returned nil function", format)
 		}
 		if bps == 0 {
-			t.Errorf("sampleDecoder(%d) returned 0 bps", fmt)
+			t.Errorf("sampleDecoder(%d) returned 0 bps", format)
 		}
 	}
 

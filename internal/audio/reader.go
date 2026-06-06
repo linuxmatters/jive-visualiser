@@ -214,13 +214,13 @@ func decodeF32(buf []byte, i int) float64 {
 
 // sampleDecoder selects the appropriate decode function and bytes-per-sample
 // for the given sample format code.
-func sampleDecoder(sampleFormat int) (func([]byte, int) float64, int, error) {
+func sampleDecoder(sampleFormat ffmpeg.AVSampleFormat) (func([]byte, int) float64, int, error) {
 	switch sampleFormat {
-	case 1, 6: // S16, S16P
+	case ffmpeg.AVSampleFmtS16, ffmpeg.AVSampleFmtS16P:
 		return decodeS16, 2, nil
-	case 2, 7: // S32, S32P
+	case ffmpeg.AVSampleFmtS32, ffmpeg.AVSampleFmtS32P:
 		return decodeS32, 4, nil
-	case 3, 8: // Flt, Fltp
+	case ffmpeg.AVSampleFmtFlt, ffmpeg.AVSampleFmtFltp:
 		return decodeF32, 4, nil
 	default:
 		return nil, 0, fmt.Errorf("unsupported sample format: %d", sampleFormat)
@@ -231,7 +231,7 @@ func sampleDecoder(sampleFormat int) (func([]byte, int) float64, int, error) {
 // Stereo is automatically downmixed to mono.
 func (d *StreamingReader) extractSamples() ([]float64, error) {
 	nbSamples := d.frame.NbSamples()
-	sampleFormat := d.frame.Format()
+	sampleFormat := ffmpeg.AVSampleFormat(d.frame.Format())
 	channels := d.channels
 
 	decode, bps, err := sampleDecoder(sampleFormat)
@@ -243,7 +243,7 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 
 	// Determine if format is planar (one sample plane per channel)
 	var isPlanar bool
-	switch ffmpeg.AVSampleFormat(sampleFormat) {
+	switch sampleFormat {
 	case ffmpeg.AVSampleFmtS16P, ffmpeg.AVSampleFmtS32P, ffmpeg.AVSampleFmtFltp:
 		isPlanar = true
 	}
