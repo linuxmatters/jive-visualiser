@@ -20,8 +20,9 @@
 
 ### Key Modules
 - `cmd/jivefire/main.go` — CLI entry, 2-pass coordinator
-- `internal/audio/` — FFmpegDecoder implements AudioDecoder interface, FFT analysis
+- `internal/audio/` — `StreamingReader` (reader.go) chunk-based decode, FFT analysis
 - `internal/encoder/` — ffmpeg-statigo wrapper, RGB→YUV conversion, FIFO buffer
+- `internal/yuv/` — YCbCr coefficients, `RGBToY`/`RGBToCb`/`RGBToCr`, `ParallelRows`
 - `internal/renderer/` — Frame generation, bar drawing, thumbnail
 - `internal/ui/` — Bubbletea TUI (unified progress.go for both passes)
 - `internal/config/` — Constants (dimensions, FFT params, colours)
@@ -30,7 +31,7 @@
 
 - All FFmpeg access through `third_party/ffmpeg-statigo` submodule (FFmpeg 8.0 static bindings)
 - `*.gen.go` files in submodule are auto-generated — do not edit
-- Audio decoding: `internal/audio/ffmpeg_decoder.go` implements `AudioDecoder` interface
+- Audio decoding: `internal/audio/reader.go` — `NewStreamingReader` returns `*StreamingReader`
 - Video/audio encoding: `internal/encoder/encoder.go` wraps libx264/AAC
 
 ## Audio Processing
@@ -42,8 +43,8 @@
 
 ## Performance Patterns
 
-- RGB→YUV conversion in `encoder/frame.go` parallelised across CPU cores (8.4× faster than swscale)
-- `convertRGBAToYUV` (YUV420P) and `convertRGBAToNV12` (NV12) are intentionally kept as separate functions despite near-identical structure — the hot-path duplication avoids a callback/interface indirection that would hurt throughput; do not refactor into a shared helper
+- RGB→YUV conversion in `encoder/frame.go` parallelised across CPU cores via `yuv.ParallelRows` (8.4× faster than swscale)
+- `convertRGBAToYUV` (YUV420P) and `convertRGBAToNV12` (NV12) in `encoder/frame.go` are intentionally kept as separate functions despite near-identical structure — the hot-path duplication avoids a callback/interface indirection that would hurt throughput; do not refactor into a shared helper (shared low-level primitives live in `internal/yuv`)
 - Frame rendering uses symmetric mirroring (draw 1/4 pixels, mirror 3×)
 - Pre-computed intensity/colour tables in `renderer/frame.go`
 - Bubbletea UI uses non-blocking goroutine channels
