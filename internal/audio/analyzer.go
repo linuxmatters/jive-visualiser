@@ -11,7 +11,7 @@ import (
 	"github.com/linuxmatters/jivefire/internal/config"
 )
 
-// FrameAnalysis holds statistics for a single frame
+// FrameAnalysis holds statistics for a single frame.
 type FrameAnalysis struct {
 	// Peak FFT magnitude across all bars
 	PeakMagnitude float64
@@ -38,10 +38,10 @@ type Profile struct {
 	Duration   float64 // Seconds
 }
 
-// ProgressCallback is called with progress updates during analysis
+// ProgressCallback is called with progress updates during analysis.
 type ProgressCallback func(frame, totalFrames int, currentRMS, currentPeak float64, barHeights []float64, duration time.Duration)
 
-// AnalyzeAudio performs Pass 1: stream through audio and collect statistics
+// AnalyzeAudio performs Pass 1: stream through audio and collect statistics.
 func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error) {
 	// Open streaming reader
 	reader, err := NewStreamingReader(filename)

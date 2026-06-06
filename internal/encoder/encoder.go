@@ -344,7 +344,7 @@ func (e *Encoder) setHWEncoderOptions(opts **ffmpeg.AVDictionary) {
 	switch e.hwEncoder.Type {
 	case HWAccelNVENC:
 		// NVENC options optimized for fast visualisation encoding
-		// Preset p2 = faster encoding with acceptable quality (p1=fastest, p7=slowest)
+		// Preset p1 = fastest encoding (scale runs p1=fastest to p7=slowest)
 		_, _ = ffmpeg.AVDictSet(opts, ffmpeg.ToCStr("preset"), ffmpeg.ToCStr("p1"), 0)
 		// Low latency tuning - reduces pipeline delay
 		_, _ = ffmpeg.AVDictSet(opts, ffmpeg.ToCStr("tune"), ffmpeg.ToCStr("ull"), 0)

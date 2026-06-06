@@ -631,8 +631,8 @@ func formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
 }
 
-// renderSpectrum creates a fire-coloured ASCII visualisation of bar heights
-// Now renders 2 rows tall for better visibility
+// renderSpectrum creates a fire-coloured ASCII visualisation of bar heights.
+// Renders two rows tall so each bar shows finer height resolution.
 func renderSpectrum(barHeights []float64, width int) string {
 	if len(barHeights) == 0 || width == 0 {
 		return ""
@@ -640,10 +640,9 @@ func renderSpectrum(barHeights []float64, width int) string {
 
 	blocks := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
-	// Gradient expansion of the four base theme colours (FireCrimson, FireRed,
-	// FireOrange, FireYellow) into eight steps for smoother spectrum colouring.
-	// This is not duplication - these intermediate values provide visual fidelity
-	// that the four base colours alone cannot.
+	// Eight-step gradient expanded from the four base theme colours (FireCrimson,
+	// FireRed, FireOrange, FireYellow). The intermediate stops give the spectrum
+	// finer colour fidelity than the four base colours alone.
 	fireColors := []lipgloss.Color{
 		lipgloss.Color("#8B0000"), // Dark red (ember)
 		lipgloss.Color("#B22222"), // Firebrick

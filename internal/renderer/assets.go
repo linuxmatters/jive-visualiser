@@ -102,7 +102,7 @@ func DrawEpisodeNumber(img *image.RGBA, face font.Face, episodeNum string, textC
 	textWidth := (bounds.Max.X - bounds.Min.X).Ceil()
 	textHeight := (bounds.Max.Y - bounds.Min.Y).Ceil()
 
-	// Position in top right corner with proportional offset (40px from edges)
+	// Position in top right corner, inset 30px from the edges
 	offset := 30
 	x := config.Width - textWidth - offset
 	y := textHeight + offset

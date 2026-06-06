@@ -183,7 +183,7 @@ func main() {
 	channels := CLI.Channels
 	noPreview := CLI.NoPreview
 
-	_ = ctx // Kong context available for future use
+	_ = ctx // ctx is not needed past argument parsing
 
 	// Generate video using 2-pass streaming approach
 	generateVideo(inputFile, outputFile, channels, noPreview, hwAccelType, runtimeConfig)

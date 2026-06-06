@@ -52,9 +52,9 @@ const (
 	OvershootThreshold = 1.0   // Threshold for soft knee compression
 )
 
-// Appearance - Visual styling configuration
-// Note: Future customization support will allow users to override these defaults.
-// Embedded assets are currently located in internal/renderer/assets/
+// Appearance - Visual styling configuration.
+// Embedded assets live in internal/renderer/assets/. Runtime overrides for
+// colours and image paths are applied via RuntimeConfig.
 const (
 	// Bar colors (RGB values for visualization bars)
 	BarColorR = 164
