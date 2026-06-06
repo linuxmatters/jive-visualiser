@@ -22,6 +22,10 @@ type StreamingReader struct {
 	sampleRate  int
 	channels    int
 
+	// drained marks that the decoder has been flushed at end-of-stream, so the
+	// delay buffer is not drained twice.
+	drained bool
+
 	// Buffer for leftover samples from previous decode
 	sampleBuffer []float64
 }
@@ -139,11 +143,19 @@ func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
 		ret, err := ffmpeg.AVReadFrame(d.formatCtx, d.packet)
 		if err != nil {
 			if errors.Is(err, ffmpeg.AVErrorEOF) {
-				// End of file - return what we have
+				// End of stream: flush the decoder once to recover any frames
+				// held in its delay buffer, then drain the sample buffer.
+				if !d.drained {
+					d.drained = true
+					if err := d.flushDecoder(); err != nil {
+						return nil, err
+					}
+				}
 				if len(d.sampleBuffer) > 0 {
-					result := make([]float64, len(d.sampleBuffer))
-					copy(result, d.sampleBuffer)
-					d.sampleBuffer = d.sampleBuffer[:0]
+					n := min(numSamples, len(d.sampleBuffer))
+					result := make([]float64, n)
+					copy(result, d.sampleBuffer[:n])
+					d.sampleBuffer = d.sampleBuffer[n:]
 					return result, nil
 				}
 				return nil, io.EOF
@@ -193,6 +205,34 @@ func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
 	copy(result, d.sampleBuffer[:numSamples])
 	d.sampleBuffer = d.sampleBuffer[numSamples:]
 	return result, nil
+}
+
+// flushDecoder sends a NULL packet to enter draining mode and appends every
+// remaining frame held in the decoder's delay buffer to the sample buffer.
+func (d *StreamingReader) flushDecoder() error {
+	if _, err := ffmpeg.AVCodecSendPacket(d.codecCtx, nil); err != nil {
+		return fmt.Errorf("failed to flush decoder: %w", err)
+	}
+
+	for {
+		_, err := ffmpeg.AVCodecReceiveFrame(d.codecCtx, d.frame)
+		if err != nil {
+			if errors.Is(err, ffmpeg.AVErrorEOF) || errors.Is(err, ffmpeg.EAgain) {
+				break
+			}
+			return fmt.Errorf("failed to receive frame: %w", err)
+		}
+
+		samples, err := d.extractSamples()
+		if err != nil {
+			return fmt.Errorf("failed to extract samples: %w", err)
+		}
+		d.sampleBuffer = append(d.sampleBuffer, samples...)
+
+		ffmpeg.AVFrameUnref(d.frame)
+	}
+
+	return nil
 }
 
 // unsafeByteSlice reinterprets a pointer as a byte slice of the given length.
