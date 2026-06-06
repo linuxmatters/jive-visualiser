@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/linuxmatters/jivefire/internal/config"
 	"github.com/linuxmatters/jivefire/internal/theme"
 )
 
@@ -245,7 +246,7 @@ func (m *Model) renderFinalProgress() string {
 	s.WriteString("\n\n")
 
 	// Final timing - calculate and display final speed
-	videoDuration := time.Duration(m.complete.TotalFrames) * time.Second / 30
+	videoDuration := time.Duration(m.complete.TotalFrames) * time.Second / config.FPS
 	var finalSpeed float64
 	if m.complete.TotalTime > 0 {
 		finalSpeed = float64(videoDuration) / float64(m.complete.TotalTime)
@@ -377,7 +378,7 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 		estimatedTotal = time.Duration(float64(elapsed) / percent)
 		eta = estimatedTotal - elapsed
 
-		videoEncodedSoFar := time.Duration(m.renderState.Frame) * time.Second / 30
+		videoEncodedSoFar := time.Duration(m.renderState.Frame) * time.Second / config.FPS
 		if elapsed > 0 {
 			speed = float64(videoEncodedSoFar) / float64(elapsed)
 		}
@@ -503,7 +504,7 @@ func (m *Model) renderComplete() string {
 		fmt.Fprintf(&s, "%s%s\n", dimLabel.Render("Encoder:  "), m.complete.EncoderName)
 	}
 
-	videoDuration := time.Duration(m.complete.TotalFrames) * time.Second / 30
+	videoDuration := time.Duration(m.complete.TotalFrames) * time.Second / config.FPS
 	fmt.Fprintf(&s, "%s%d frames, %.2f fps average\n",
 		dimLabel.Render("Video:    "),
 		m.complete.TotalFrames,

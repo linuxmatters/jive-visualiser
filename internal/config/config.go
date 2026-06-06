@@ -32,7 +32,7 @@ const (
 // These values are derived from the CAVA audio visualiser project
 // https://github.com/karlstav/cava
 const (
-	Framerate      = 30.0
+	Framerate      = float64(FPS)
 	NoiseReduction = 0.77  // CAVA default integral smoothing
 	FallAccel      = 0.028 // CAVA gravity acceleration constant
 
