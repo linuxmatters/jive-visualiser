@@ -351,11 +351,11 @@ func TestRuntimeConfig_GetBarColor(t *testing.T) {
 			wantB:  BarColorB,
 		},
 		{
-			name: "Custom R only",
+			name: "Unset colour (use defaults)",
 			config: &RuntimeConfig{
-				BarColorR: ptrUint8(100),
+				BarColor: OptionalColor{R: 100},
 			},
-			// Should use default since not all fields are set
+			// Should use default since the colour is not marked Set
 			wantR: BarColorR,
 			wantG: BarColorG,
 			wantB: BarColorB,
@@ -363,9 +363,7 @@ func TestRuntimeConfig_GetBarColor(t *testing.T) {
 		{
 			name: "All custom values",
 			config: &RuntimeConfig{
-				BarColorR: ptrUint8(255),
-				BarColorG: ptrUint8(128),
-				BarColorB: ptrUint8(64),
+				BarColor: OptionalColor{R: 255, G: 128, B: 64, Set: true},
 			},
 			wantR: 255,
 			wantG: 128,
@@ -374,9 +372,7 @@ func TestRuntimeConfig_GetBarColor(t *testing.T) {
 		{
 			name: "Custom with zeros",
 			config: &RuntimeConfig{
-				BarColorR: ptrUint8(0),
-				BarColorG: ptrUint8(0),
-				BarColorB: ptrUint8(255),
+				BarColor: OptionalColor{R: 0, G: 0, B: 255, Set: true},
 			},
 			wantR: 0,
 			wantG: 0,
@@ -415,9 +411,7 @@ func TestRuntimeConfig_GetTextColor(t *testing.T) {
 		{
 			name: "All custom values",
 			config: &RuntimeConfig{
-				TextColorR: ptrUint8(200),
-				TextColorG: ptrUint8(100),
-				TextColorB: ptrUint8(50),
+				TextColor: OptionalColor{R: 200, G: 100, B: 50, Set: true},
 			},
 			wantR: 200,
 			wantG: 100,
@@ -426,9 +420,7 @@ func TestRuntimeConfig_GetTextColor(t *testing.T) {
 		{
 			name: "Custom black",
 			config: &RuntimeConfig{
-				TextColorR: ptrUint8(0),
-				TextColorG: ptrUint8(0),
-				TextColorB: ptrUint8(0),
+				TextColor: OptionalColor{R: 0, G: 0, B: 0, Set: true},
 			},
 			wantR: 0,
 			wantG: 0,
@@ -490,33 +482,31 @@ func TestRuntimeConfig_NilFields(t *testing.T) {
 			},
 		},
 		{
-			name: "Partially nil bar color",
+			name: "Unset bar color",
 			config: &RuntimeConfig{
-				BarColorR: ptrUint8(100),
-				BarColorG: ptrUint8(50),
-				// BarColorB is nil - missing component should trigger default
+				BarColor: OptionalColor{R: 100, G: 50},
+				// Set is false - colour should be treated as absent
 			},
 			validate: func(t *testing.T, c *RuntimeConfig) {
-				// Should return defaults because not all components are set
+				// Should return defaults because the colour is not marked Set
 				r, g, b := c.GetBarColor()
 				if r != BarColorR || g != BarColorG || b != BarColorB {
-					t.Errorf("Partial bar color = (%d, %d, %d), want defaults (%d, %d, %d)",
+					t.Errorf("Unset bar color = (%d, %d, %d), want defaults (%d, %d, %d)",
 						r, g, b, BarColorR, BarColorG, BarColorB)
 				}
 			},
 		},
 		{
-			name: "Partially nil text color",
+			name: "Unset text color",
 			config: &RuntimeConfig{
-				TextColorR: ptrUint8(200),
-				// TextColorG is nil
-				TextColorB: ptrUint8(100),
+				TextColor: OptionalColor{R: 200, B: 100},
+				// Set is false - colour should be treated as absent
 			},
 			validate: func(t *testing.T, c *RuntimeConfig) {
-				// Should return defaults because not all components are set
+				// Should return defaults because the colour is not marked Set
 				r, g, b := c.GetTextColor()
 				if r != TextColorR || g != TextColorG || b != TextColorB {
-					t.Errorf("Partial text color = (%d, %d, %d), want defaults (%d, %d, %d)",
+					t.Errorf("Unset text color = (%d, %d, %d), want defaults (%d, %d, %d)",
 						r, g, b, TextColorR, TextColorG, TextColorB)
 				}
 			},
@@ -543,12 +533,8 @@ func TestRuntimeConfig_NilFields(t *testing.T) {
 		{
 			name: "All fields set - should use overrides",
 			config: &RuntimeConfig{
-				BarColorR:           ptrUint8(10),
-				BarColorG:           ptrUint8(20),
-				BarColorB:           ptrUint8(30),
-				TextColorR:          ptrUint8(40),
-				TextColorG:          ptrUint8(50),
-				TextColorB:          ptrUint8(60),
+				BarColor:            OptionalColor{R: 10, G: 20, B: 30, Set: true},
+				TextColor:           OptionalColor{R: 40, G: 50, B: 60, Set: true},
 				BackgroundImagePath: "/custom/bg.png",
 				ThumbnailImagePath:  "/custom/thumb.png",
 			},
@@ -579,12 +565,10 @@ func TestRuntimeConfig_NilFields(t *testing.T) {
 			},
 		},
 		{
-			name: "Mixed nil and set - only bar color set",
+			name: "Mixed - only bar color set",
 			config: &RuntimeConfig{
-				BarColorR: ptrUint8(111),
-				BarColorG: ptrUint8(222),
-				BarColorB: ptrUint8(233),
-				// Text colors remain nil
+				BarColor: OptionalColor{R: 111, G: 222, B: 233, Set: true},
+				// Text colour remains unset
 			},
 			validate: func(t *testing.T, c *RuntimeConfig) {
 				// Bar color set should use overrides
@@ -612,6 +596,3 @@ func TestRuntimeConfig_NilFields(t *testing.T) {
 		})
 	}
 }
-
-// ptrUint8 is a helper to create pointers to uint8 values for testing.
-func ptrUint8(v uint8) *uint8 { return &v } //nolint:modernize // pointer-to-value helper for tests

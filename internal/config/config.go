@@ -87,17 +87,19 @@ const (
 	FramingLineHeight = 4 // Height in pixels of framing lines above/below center gap
 )
 
-// RuntimeConfig holds optional runtime overrides for customization
-// When fields are nil/empty, the defaults from constants above are used
-type RuntimeConfig struct {
-	// Optional color overrides (RGB values 0-255)
-	BarColorR *uint8
-	BarColorG *uint8
-	BarColorB *uint8
+// OptionalColor is an RGB colour that records whether it was explicitly set.
+// When Set is false the colour is treated as absent and defaults apply.
+type OptionalColor struct {
+	R, G, B uint8
+	Set     bool
+}
 
-	TextColorR *uint8
-	TextColorG *uint8
-	TextColorB *uint8
+// RuntimeConfig holds optional runtime overrides for customization
+// When fields are unset/empty, the defaults from constants above are used
+type RuntimeConfig struct {
+	// Optional colour overrides (apply only when Set is true)
+	BarColor  OptionalColor
+	TextColor OptionalColor
 
 	// Optional image path overrides
 	BackgroundImagePath string
@@ -106,16 +108,16 @@ type RuntimeConfig struct {
 
 // GetBarColor returns the bar color RGB values (uses override or default)
 func (c *RuntimeConfig) GetBarColor() (r, g, b uint8) {
-	if c.BarColorR != nil && c.BarColorG != nil && c.BarColorB != nil {
-		return *c.BarColorR, *c.BarColorG, *c.BarColorB
+	if c.BarColor.Set {
+		return c.BarColor.R, c.BarColor.G, c.BarColor.B
 	}
 	return BarColorR, BarColorG, BarColorB
 }
 
 // GetTextColor returns the text color RGB values (uses override or default)
 func (c *RuntimeConfig) GetTextColor() (r, g, b uint8) {
-	if c.TextColorR != nil && c.TextColorG != nil && c.TextColorB != nil {
-		return *c.TextColorR, *c.TextColorG, *c.TextColorB
+	if c.TextColor.Set {
+		return c.TextColor.R, c.TextColor.G, c.TextColor.B
 	}
 	return TextColorR, TextColorG, TextColorB
 }

@@ -143,9 +143,7 @@ func main() {
 			cli.PrintError(fmt.Sprintf("invalid --bar-color: %v", err))
 			os.Exit(1)
 		}
-		runtimeConfig.BarColorR = &r
-		runtimeConfig.BarColorG = &g
-		runtimeConfig.BarColorB = &b
+		runtimeConfig.BarColor = config.OptionalColor{R: r, G: g, B: b, Set: true}
 	}
 
 	// Parse and validate text color if provided
@@ -155,9 +153,7 @@ func main() {
 			cli.PrintError(fmt.Sprintf("invalid --text-color: %v", err))
 			os.Exit(1)
 		}
-		runtimeConfig.TextColorR = &r
-		runtimeConfig.TextColorG = &g
-		runtimeConfig.TextColorB = &b
+		runtimeConfig.TextColor = config.OptionalColor{R: r, G: g, B: b, Set: true}
 	}
 
 	// Validate background image if provided
