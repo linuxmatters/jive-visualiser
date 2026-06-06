@@ -222,7 +222,7 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 		// === PASS 1: Analysis ===
 		pass1StartTime := time.Now()
 
-		profile, analysisErr = audio.AnalyzeAudio(inputFile, func(frame, totalFrames int, currentRMS, currentPeak float64, barHeights []float64, duration time.Duration) {
+		profile, analysisErr = audio.AnalyzeAudio(inputFile, func(frame int, currentRMS, currentPeak float64, barHeights []float64, duration time.Duration) {
 			// Send progress update to unified UI
 			p.Send(ui.AnalysisProgress{
 				Frame:       frame,
