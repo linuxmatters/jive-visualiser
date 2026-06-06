@@ -1,6 +1,6 @@
 package theme
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 // Fire colour palette
 // Shared fire theme colours for consistent branding across CLI and TUI.

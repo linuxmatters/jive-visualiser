@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/alecthomas/kong"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/linuxmatters/jivefire/internal/audio"
 	"github.com/linuxmatters/jivefire/internal/cli"
 	"github.com/linuxmatters/jivefire/internal/config"
@@ -42,7 +42,8 @@ var CLI struct {
 }
 
 func main() {
-	ctx := kong.Parse(&CLI,
+	ctx := kong.Parse(
+		&CLI,
 		kong.Name("jivefire"),
 		kong.Description("Spin your podcast .wav into a groovy MP4 visualiser."),
 		kong.Vars{"version": version},
@@ -209,9 +210,10 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 	estimatedTotalFrames := int(metadata.NumSamples) / samplesPerFrame
 
 	// Create unified Bubbletea program for both passes
-	// Use alternate screen buffer to prevent ghost box edges when view height changes
+	// Alternate screen buffer (set via View().AltScreen) prevents ghost box
+	// edges when the view height changes between passes
 	model := ui.NewModel(noPreview)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 
 	// Shared state between goroutines
 	var profile *audio.Profile
