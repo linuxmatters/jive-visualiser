@@ -5,6 +5,8 @@ import (
 	"runtime"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
+
+	"github.com/linuxmatters/jivefire/internal/config"
 )
 
 // HWAccelType represents a hardware acceleration type
@@ -91,8 +93,8 @@ func setupTestHWFramesContext(hwDeviceCtx *ffmpeg.AVBufferRef, codecCtx *ffmpeg.
 
 	framesCtx.SetFormat(hwFormat)
 	framesCtx.SetSwFormat(ffmpeg.AVPixFmtNv12)
-	framesCtx.SetWidth(1280)
-	framesCtx.SetHeight(720)
+	framesCtx.SetWidth(config.Width)
+	framesCtx.SetHeight(config.Height)
 
 	ret, _ := ffmpeg.AVHWFrameCtxInit(hwFramesRef)
 	if ret < 0 {
@@ -136,10 +138,10 @@ func testEncoderAvailable(encoderName string, deviceType ffmpeg.AVHWDeviceType, 
 	defer ffmpeg.AVCodecFreeContext(&codecCtx)
 
 	// Configure minimal encoder settings for the test
-	codecCtx.SetWidth(1280)
-	codecCtx.SetHeight(720)
-	codecCtx.SetTimeBase(ffmpeg.AVMakeQ(1, 30))
-	codecCtx.SetFramerate(ffmpeg.AVMakeQ(30, 1))
+	codecCtx.SetWidth(config.Width)
+	codecCtx.SetHeight(config.Height)
+	codecCtx.SetTimeBase(ffmpeg.AVMakeQ(1, config.FPS))
+	codecCtx.SetFramerate(ffmpeg.AVMakeQ(config.FPS, 1))
 
 	// Set pixel format based on encoder type
 	switch accelType {
