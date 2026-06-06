@@ -38,7 +38,7 @@ type Profile struct {
 }
 
 // ProgressCallback is called with progress updates during analysis.
-type ProgressCallback func(frame, totalFrames int, currentRMS, currentPeak float64, barHeights []float64, duration time.Duration)
+type ProgressCallback func(frame int, currentRMS, currentPeak float64, barHeights []float64, duration time.Duration)
 
 // AnalyzeAudio performs Pass 1: stream through audio and collect statistics.
 func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error) {
@@ -103,8 +103,7 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 		// Send progress update via callback (throttle to every 3 frames for performance)
 		if progressCb != nil && frameNum%3 == 0 {
 			elapsed := time.Since(startTime)
-			// No total frames estimate available during first pass
-			progressCb(frameNum, 0, analysis.RMSLevel, analysis.PeakMagnitude, barHeights, elapsed)
+			progressCb(frameNum, analysis.RMSLevel, analysis.PeakMagnitude, barHeights, elapsed)
 		}
 
 		// Advance sliding buffer for next frame
@@ -114,7 +113,7 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 				// Send final progress update
 				if progressCb != nil {
 					elapsed := time.Since(startTime)
-					progressCb(frameNum, frameNum, analysis.RMSLevel, analysis.PeakMagnitude, barHeights, elapsed)
+					progressCb(frameNum, analysis.RMSLevel, analysis.PeakMagnitude, barHeights, elapsed)
 				}
 				break
 			}
