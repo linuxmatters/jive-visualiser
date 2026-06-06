@@ -5,15 +5,7 @@ import (
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
-)
-
-// Color palette
-var (
-	primaryColor   = lipgloss.Color("#A40000") // Jivefire red
-	accentColor    = lipgloss.Color("#FFA500") // Orange/gold
-	mutedColor     = lipgloss.Color("#888888") // Gray
-	highlightColor = lipgloss.Color("#FFFF00") // Yellow
-	textColor      = lipgloss.Color("#FFFFFF") // White
+	"github.com/linuxmatters/jivefire/internal/theme"
 )
 
 // Styles
@@ -21,33 +13,33 @@ var (
 	// Title style - bold red with fire emoji
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(primaryColor).
+			Foreground(theme.JivefireRed).
 			MarginBottom(1)
 
 	// Section header style
 	HeaderStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(accentColor).
+			Foreground(theme.GoldOrange).
 			MarginTop(1).
 			MarginBottom(1)
 
 	// Error message style
 	ErrorStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(primaryColor)
+			Foreground(theme.JivefireRed)
 
 	// Highlight style for important values
 	HighlightStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(highlightColor)
+			Foreground(theme.NeonYellow)
 
 	// Key-value pair styles
 	KeyStyle = lipgloss.NewStyle().
-			Foreground(mutedColor)
+			Foreground(theme.NeutralGray)
 
 	ValueStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(textColor)
+			Foreground(theme.BrightWhite)
 )
 
 // PrintVersion prints version information
