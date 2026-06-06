@@ -294,12 +294,6 @@ func (d *FFmpegDecoder) SampleRate() int {
 	return d.sampleRate
 }
 
-// NumChannels returns the number of audio channels in the source file.
-// Note: ReadChunk always returns mono samples (stereo is downmixed).
-func (d *FFmpegDecoder) NumChannels() int {
-	return d.channels
-}
-
 // Close releases all FFmpeg resources.
 func (d *FFmpegDecoder) Close() error {
 	if d.frame != nil {

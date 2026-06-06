@@ -9,9 +9,6 @@ type Decoder interface {
 	// SampleRate returns the audio sample rate in Hz
 	SampleRate() int
 
-	// NumChannels returns the number of audio channels (1=mono, 2=stereo)
-	NumChannels() int
-
 	// Close closes the decoder and releases resources
 	Close() error
 }
