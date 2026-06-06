@@ -27,11 +27,11 @@ package encoder
 import (
 	"fmt"
 	"runtime"
-	"sync"
 	"testing"
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
+	"github.com/linuxmatters/jivefire/internal/yuv"
 )
 
 const (
@@ -39,7 +39,9 @@ const (
 	benchHeight = 720
 )
 
-// Current Go implementation (copied from encoder/frame.go for comparison)
+// convertRGBToYUVGo converts RGB24 frames to YUV420P using the production
+// yuv-package conversion primitives, so the benchmark measures the current
+// hot-path maths rather than a stale copy.
 func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height int) {
 	yPlane := yuvFrame.Data().Get(0)
 	uPlane := yuvFrame.Data().Get(1)
@@ -49,81 +51,28 @@ func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 	uLinesize := yuvFrame.Linesize().Get(1)
 	vLinesize := yuvFrame.Linesize().Get(2)
 
-	const (
-		yR  = 19595
-		yG  = 38470
-		yB  = 7471
-		cbR = -11056
-		cbG = -21712
-		cbB = 32768
-		crR = 32768
-		crG = -27440
-		crB = -5328
-	)
+	yuv.ParallelRows(height, func(startY, endY int) {
+		for y := startY; y < endY; y++ {
+			yPtr := unsafe.Add(yPlane, y*yLinesize)
+			rgbIdx := y * width * 3
 
-	numCPU := runtime.NumCPU()
-	rowsPerWorker := height / numCPU
-	if rowsPerWorker < 1 {
-		rowsPerWorker = 1
-		numCPU = height
-	}
+			for x := range width {
+				r := int32(rgbData[rgbIdx])
+				g := int32(rgbData[rgbIdx+1])
+				b := int32(rgbData[rgbIdx+2])
+				rgbIdx += 3
 
-	var wg sync.WaitGroup
-	wg.Add(numCPU)
+				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 
-	for worker := range numCPU {
-		startY := worker * rowsPerWorker
-		endY := startY + rowsPerWorker
-		if worker == numCPU-1 {
-			endY = height
-		}
-
-		go func(startY, endY int) {
-			defer wg.Done()
-
-			for y := startY; y < endY; y++ {
-				yOffset := y * yLinesize
-				yPtr := unsafe.Add(yPlane, yOffset)
-				rgbIdx := y * width * 3
-
-				for x := range width {
-					r1 := int32(rgbData[rgbIdx])
-					g1 := int32(rgbData[rgbIdx+1])
-					b1 := int32(rgbData[rgbIdx+2])
-					rgbIdx += 3
-
-					yy := (yR*r1 + yG*g1 + yB*b1 + 1<<15) >> 16
-					*(*uint8)(unsafe.Add(yPtr, x)) = uint8(yy) //nolint:gosec // result is clamped to 0-255
-
-					if (y&1) == 0 && (x&1) == 0 {
-						cb := cbR*r1 + cbG*g1 + cbB*b1 + 257<<15
-						if uint32(cb)&0xff000000 == 0 {
-							cb >>= 16
-						} else {
-							cb = ^(cb >> 31)
-						}
-
-						cr := crR*r1 + crG*g1 + crB*b1 + 257<<15
-						if uint32(cr)&0xff000000 == 0 {
-							cr >>= 16
-						} else {
-							cr = ^(cr >> 31)
-						}
-
-						uvY := y >> 1
-						uvX := x >> 1
-						uOffset := uvY*uLinesize + uvX
-						vOffset := uvY*vLinesize + uvX
-
-						*(*uint8)(unsafe.Add(uPlane, uOffset)) = uint8(cb) //nolint:gosec // value is clamped
-						*(*uint8)(unsafe.Add(vPlane, vOffset)) = uint8(cr) //nolint:gosec // value is clamped
-					}
+				if (y&1) == 0 && (x&1) == 0 {
+					uvY := y >> 1
+					uvX := x >> 1
+					*(*uint8)(unsafe.Add(uPlane, uvY*uLinesize+uvX)) = yuv.RGBToCb(r, g, b)
+					*(*uint8)(unsafe.Add(vPlane, uvY*vLinesize+uvX)) = yuv.RGBToCr(r, g, b)
 				}
 			}
-		}(startY, endY)
-	}
-
-	wg.Wait()
+		}
+	})
 }
 
 // SwsConverter wraps FFmpeg's swscale for RGB24 → YUV420P conversion
