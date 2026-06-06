@@ -10,81 +10,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
-	"sync"
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
+	"github.com/linuxmatters/jivefire/internal/yuv"
 )
 
 const (
 	width  = 1280
 	height = 720
 )
-
-// YCbCr coefficients (BT.601)
-const (
-	yR  = 19595
-	yG  = 38470
-	yB  = 7471
-	cbR = -11056
-	cbG = -21712
-	cbB = 32768
-	crR = 32768
-	crG = -27440
-	crB = -5328
-)
-
-func rgbToY(r, g, b int32) uint8 {
-	return uint8((yR*r + yG*g + yB*b + 1<<15) >> 16) //nolint:gosec // result is clamped to 0-255
-}
-
-func rgbToCb(r, g, b int32) uint8 {
-	cb := cbR*r + cbG*g + cbB*b + 257<<15
-	if uint32(cb)&0xff000000 == 0 { //nolint:gosec // intentional bit manipulation
-		cb >>= 16
-	} else {
-		cb = ^(cb >> 31)
-	}
-	return uint8(cb) //nolint:gosec // value is clamped by branch above
-}
-
-func rgbToCr(r, g, b int32) uint8 {
-	cr := crR*r + crG*g + crB*b + 257<<15
-	if uint32(cr)&0xff000000 == 0 { //nolint:gosec // intentional bit manipulation
-		cr >>= 16
-	} else {
-		cr = ^(cr >> 31)
-	}
-	return uint8(cr) //nolint:gosec // value is clamped by branch above
-}
-
-func parallelRows(height int, fn func(startY, endY int)) {
-	numCPU := runtime.NumCPU()
-	rowsPerWorker := height / numCPU
-	if rowsPerWorker < 1 {
-		rowsPerWorker = 1
-		numCPU = height
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(numCPU)
-
-	for worker := range numCPU {
-		startY := worker * rowsPerWorker
-		endY := startY + rowsPerWorker
-		if worker == numCPU-1 {
-			endY = height
-		}
-
-		go func(startY, endY int) {
-			defer wg.Done()
-			fn(startY, endY)
-		}(startY, endY)
-	}
-
-	wg.Wait()
-}
 
 func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height int) {
 	yPlane := yuvFrame.Data().Get(0)
@@ -95,7 +30,7 @@ func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 	uLinesize := yuvFrame.Linesize().Get(1)
 	vLinesize := yuvFrame.Linesize().Get(2)
 
-	parallelRows(height, func(startY, endY int) {
+	yuv.ParallelRows(height, func(startY, endY int) {
 		evenStart := startY
 		if evenStart&1 != 0 {
 			evenStart++
@@ -115,12 +50,12 @@ func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 				b := int32(rgbData[rgbIdx+2])
 				rgbIdx += 3
 
-				*(*uint8)(unsafe.Add(yPtr, x)) = rgbToY(r, g, b)
+				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 
 				if (x & 1) == 0 {
 					uvX := x >> 1
-					*(*uint8)(unsafe.Add(uRowPtr, uvX)) = rgbToCb(r, g, b)
-					*(*uint8)(unsafe.Add(vRowPtr, uvX)) = rgbToCr(r, g, b)
+					*(*uint8)(unsafe.Add(uRowPtr, uvX)) = yuv.RGBToCb(r, g, b)
+					*(*uint8)(unsafe.Add(vRowPtr, uvX)) = yuv.RGBToCr(r, g, b)
 				}
 			}
 		}
@@ -140,7 +75,7 @@ func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 				b := int32(rgbData[rgbIdx+2])
 				rgbIdx += 3
 
-				*(*uint8)(unsafe.Add(yPtr, x)) = rgbToY(r, g, b)
+				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 			}
 		}
 	})

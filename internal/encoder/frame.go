@@ -4,92 +4,11 @@ package encoder
 // intrinsics for potentially 30-50% additional gains in colour space conversion.
 
 import (
-	"runtime"
-	"sync"
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
+	"github.com/linuxmatters/jivefire/internal/yuv"
 )
-
-// YCbCr coefficients from Go's color/ycbcr.go (BT.601 standard).
-// These are fixed-point values scaled by 65536 for integer arithmetic.
-const (
-	// Y coefficients (sum = 65536)
-	yR = 19595 // 0.299 * 65536
-	yG = 38470 // 0.587 * 65536
-	yB = 7471  // 0.114 * 65536
-
-	// Cb coefficients (sum = 0)
-	cbR = -11056 // -0.16874 * 65536
-	cbG = -21712 // -0.33126 * 65536
-	cbB = 32768  //  0.50000 * 65536
-
-	// Cr coefficients (sum = 0)
-	crR = 32768  //  0.50000 * 65536
-	crG = -27440 // -0.41869 * 65536
-	crB = -5328  // -0.08131 * 65536
-)
-
-// rgbToY converts RGB to Y (luma) component.
-//
-//go:inline
-func rgbToY(r, g, b int32) uint8 {
-	return uint8((yR*r + yG*g + yB*b + 1<<15) >> 16) //nolint:gosec // result is clamped to 0-255
-}
-
-// rgbToCb converts RGB to Cb (blue-difference chroma) with branchless clamping.
-//
-//go:inline
-func rgbToCb(r, g, b int32) uint8 {
-	cb := cbR*r + cbG*g + cbB*b + 257<<15
-	if uint32(cb)&0xff000000 == 0 { //nolint:gosec // intentional bit manipulation
-		cb >>= 16
-	} else {
-		cb = ^(cb >> 31)
-	}
-	return uint8(cb) //nolint:gosec // value is clamped by branch above
-}
-
-// rgbToCr converts RGB to Cr (red-difference chroma) with branchless clamping.
-//
-//go:inline
-func rgbToCr(r, g, b int32) uint8 {
-	cr := crR*r + crG*g + crB*b + 257<<15
-	if uint32(cr)&0xff000000 == 0 { //nolint:gosec // intentional bit manipulation
-		cr >>= 16
-	} else {
-		cr = ^(cr >> 31)
-	}
-	return uint8(cr) //nolint:gosec // value is clamped by branch above
-}
-
-// parallelRows executes fn across height rows using all CPU cores.
-func parallelRows(height int, fn func(startY, endY int)) {
-	numCPU := runtime.NumCPU()
-	rowsPerWorker := height / numCPU
-	if rowsPerWorker < 1 {
-		rowsPerWorker = 1
-		numCPU = height
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(numCPU)
-
-	for worker := range numCPU {
-		startY := worker * rowsPerWorker
-		endY := startY + rowsPerWorker
-		if worker == numCPU-1 {
-			endY = height
-		}
-
-		go func(startY, endY int) {
-			defer wg.Done()
-			fn(startY, endY)
-		}(startY, endY)
-	}
-
-	wg.Wait()
-}
 
 // convertRGBAToYUV converts RGBA data directly to YUV420P (planar) format.
 // Skips the intermediate RGB24 buffer allocation for significantly faster software encoding.
@@ -102,7 +21,7 @@ func convertRGBAToYUV(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 	uLinesize := yuvFrame.Linesize().Get(1)
 	vLinesize := yuvFrame.Linesize().Get(2)
 
-	parallelRows(height, func(startY, endY int) {
+	yuv.ParallelRows(height, func(startY, endY int) {
 		// Align startY to even for correct UV row calculation
 		evenStart := startY
 		if evenStart&1 != 0 {
@@ -123,13 +42,13 @@ func convertRGBAToYUV(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 				b := int32(rgbaData[rgbaIdx+2])
 				rgbaIdx += 4 // Skip alpha
 
-				*(*uint8)(unsafe.Add(yPtr, x)) = rgbToY(r, g, b)
+				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 
 				// UV subsampling: every other pixel on even rows
 				if (x & 1) == 0 {
 					uvX := x >> 1
-					*(*uint8)(unsafe.Add(uRowPtr, uvX)) = rgbToCb(r, g, b)
-					*(*uint8)(unsafe.Add(vRowPtr, uvX)) = rgbToCr(r, g, b)
+					*(*uint8)(unsafe.Add(uRowPtr, uvX)) = yuv.RGBToCb(r, g, b)
+					*(*uint8)(unsafe.Add(vRowPtr, uvX)) = yuv.RGBToCr(r, g, b)
 				}
 			}
 		}
@@ -149,7 +68,7 @@ func convertRGBAToYUV(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 				b := int32(rgbaData[rgbaIdx+2])
 				rgbaIdx += 4 // Skip alpha
 
-				*(*uint8)(unsafe.Add(yPtr, x)) = rgbToY(r, g, b)
+				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 			}
 		}
 	})
@@ -164,7 +83,7 @@ func convertRGBAToNV12(rgbaData []byte, nv12Frame *ffmpeg.AVFrame, width, height
 	yLinesize := nv12Frame.Linesize().Get(0)
 	uvLinesize := nv12Frame.Linesize().Get(1)
 
-	parallelRows(height, func(startY, endY int) {
+	yuv.ParallelRows(height, func(startY, endY int) {
 		// Align startY to even for correct UV row calculation
 		evenStart := startY
 		if evenStart&1 != 0 {
@@ -184,14 +103,14 @@ func convertRGBAToNV12(rgbaData []byte, nv12Frame *ffmpeg.AVFrame, width, height
 				b := int32(rgbaData[rgbaIdx+2])
 				rgbaIdx += 4 // Skip alpha
 
-				*(*uint8)(unsafe.Add(yPtr, x)) = rgbToY(r, g, b)
+				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 
 				// UV subsampling: every other pixel on even rows
 				if (x & 1) == 0 {
 					uvX := x >> 1
 					uvPtr := unsafe.Add(uvRowPtr, uvX*2)
-					*(*uint8)(uvPtr) = rgbToCb(r, g, b)
-					*(*uint8)(unsafe.Add(uvPtr, 1)) = rgbToCr(r, g, b)
+					*(*uint8)(uvPtr) = yuv.RGBToCb(r, g, b)
+					*(*uint8)(unsafe.Add(uvPtr, 1)) = yuv.RGBToCr(r, g, b)
 				}
 			}
 		}
@@ -211,7 +130,7 @@ func convertRGBAToNV12(rgbaData []byte, nv12Frame *ffmpeg.AVFrame, width, height
 				b := int32(rgbaData[rgbaIdx+2])
 				rgbaIdx += 4 // Skip alpha
 
-				*(*uint8)(unsafe.Add(yPtr, x)) = rgbToY(r, g, b)
+				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 			}
 		}
 	})
