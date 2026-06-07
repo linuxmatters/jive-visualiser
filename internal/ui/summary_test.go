@@ -80,9 +80,10 @@ func TestRenderCompleteUsesTable(t *testing.T) {
 	}
 }
 
-// TestRenderAudioProfileAligns verifies the audio profile row renders through
-// lipgloss with consistent gaps between cells, keeps the existing labels/units,
-// and preserves the placeholder branch when no profile is populated yet.
+// TestRenderAudioProfileAligns verifies the audio profile renders as horizontal
+// level meters (Peak/RMS/Range/Scale, two per row) with aligned bars, keeps the
+// metric labels and values, and preserves the placeholder branch when no profile
+// is populated yet.
 func TestRenderAudioProfileAligns(t *testing.T) {
 	t.Run("placeholder branch preserved", func(t *testing.T) {
 		m := NewModel(true) // audioProfile is nil
@@ -98,7 +99,7 @@ func TestRenderAudioProfileAligns(t *testing.T) {
 		}
 	})
 
-	t.Run("populated row keeps labels, units and consistent gaps", func(t *testing.T) {
+	t.Run("populated metrics render as aligned meters", func(t *testing.T) {
 		m := NewModel(true)
 		m.audioProfile = &AudioProfile{
 			Duration:     185 * time.Second,
@@ -111,14 +112,18 @@ func TestRenderAudioProfileAligns(t *testing.T) {
 		m.renderAudioProfile(&s)
 		out := stripStyles(s.String())
 
-		// Labels, units and values must survive the layout swap unchanged.
+		// Two rows: Peak | Range, then RMS | Scale.
+		rows := strings.Split(out, "\n")
+		if len(rows) != 2 {
+			t.Fatalf("expected 2 meter rows, got %d: %q", len(rows), out)
+		}
+
+		// Labels and values survive the meter layout.
 		wantSubstrings := []string{
-			"Audio",
-			"185.0s",
-			"Peak:", "-1.2 dB",
-			"RMS:", "-14.8 dB",
-			"Range:", "13.6 dB",
-			"Scale:", "1.234",
+			"Peak", "-1.2",
+			"RMS", "-14.8",
+			"Range", "13.6 dB",
+			"Scale", "1.234",
 		}
 		for _, want := range wantSubstrings {
 			if !strings.Contains(out, want) {
@@ -126,27 +131,22 @@ func TestRenderAudioProfileAligns(t *testing.T) {
 			}
 		}
 
-		// Consistent gaps: every adjacent metric cell is separated by the same
-		// two-space gap. Assert each value is followed by two spaces before the
-		// next label (the inter-cell gap), proving uniform spacing.
-		for _, value := range []string{"185.0s", "-1.2 dB", "-14.8 dB", "13.6 dB"} {
-			idx := strings.Index(out, value)
-			if idx < 0 {
-				t.Fatalf("value %q absent from %q", value, out)
+		// Each row carries meter bar caps and at least one filled cell.
+		for i, row := range rows {
+			if strings.Count(row, "▕") != 2 || strings.Count(row, "▏") != 2 {
+				t.Errorf("row %d missing the two meter bar caps: %q", i, row)
 			}
-			after := out[idx+len(value):]
-			if !strings.HasPrefix(after, "  ") {
-				t.Errorf("value %q not followed by the two-space inter-cell gap, got %q", value, after)
+			if !strings.ContainsRune(row, '█') {
+				t.Errorf("row %d has no filled meter cells: %q", i, row)
 			}
 		}
 
-		// Each label is separated from its value by exactly one space.
-		for _, label := range []string{"Peak:", "RMS:", "Range:", "Scale:"} {
-			idx := strings.Index(out, label)
-			after := out[idx+len(label):]
-			if !strings.HasPrefix(after, " ") || strings.HasPrefix(after, "  ") {
-				t.Errorf("label %q not followed by a single-space gap, got %q", label, after)
-			}
+		// Bars align: the right-column meter ("Range"/"Scale") starts at the same
+		// column on both rows.
+		col0 := strings.Index(rows[0], "Range")
+		col1 := strings.Index(rows[1], "Scale")
+		if col0 != col1 {
+			t.Errorf("right-column meters misaligned: Range at %d, Scale at %d", col0, col1)
 		}
 	})
 }

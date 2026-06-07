@@ -156,6 +156,11 @@ type Model struct {
 	spectrumPos     []float64
 	spectrumVel     []float64
 
+	// speedHistory is a bounded trace of recent realtime-speed samples, appended
+	// once per RenderProgress update and drawn as the Speed card's sparkline.
+	// Capped at speedHistoryCap; the oldest sample drops off the front.
+	speedHistory []float64
+
 	// Timing
 	overallStartTime time.Time
 	pass1StartTime   time.Time
@@ -170,6 +175,29 @@ type Model struct {
 	cachedFrameNum  int
 	completionDelay time.Duration
 	quitting        bool
+}
+
+// boxDesignWidth is the fixed shared outer width for every bordered box. It is
+// derived from the video preview: the preview content is
+// DefaultPreviewConfig().Width (72) cells, plus its own 1-cell border on each
+// side (74), and the live box adds a 1-cell border plus 2 columns of padding on
+// each side (border 2 + padding 4 = 6). 74 + 6 = 80, so the box hugs the preview
+// with no empty margin. Every box renders at this width so none visibly resizes
+// between Pass 1, Pass 2 and the completion screen.
+const boxDesignWidth = 80
+
+// boxContentWidth returns the shared outer width applied to every bordered box.
+// lipgloss treats .Width(n) on a bordered style as the box's overall width
+// (border included), so applying this single value to all box styles yields
+// equal outer widths regardless of their differing padding. The width is fixed
+// at boxDesignWidth; a narrower terminal clamps it down. The preview is
+// fixed-width and may overflow on very narrow terminals, the pre-existing
+// behaviour.
+func (m *Model) boxContentWidth() int {
+	if m.width > 0 && m.width < boxDesignWidth {
+		return m.width
+	}
+	return boxDesignWidth
 }
 
 // newProgressBar builds a fire-gradient progress bar of the given width with the
@@ -280,6 +308,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RenderProgress:
 		m.renderState = msg
+		m.recordSpeedSample(msg)
 		// Drive the bar's spring toward the new target. The producer owns the
 		// target percent; the bar's own FrameMsg loop animates the fill.
 		if msg.TotalFrames > 0 {
@@ -401,13 +430,11 @@ func (m *Model) renderFinalProgress() string {
 	s.WriteString("\n")
 	m.renderAudioProfile(&s)
 
-	// Final spectrum - zeroed out to show clean state
-	spectrumWidth := m.width - 4
-	if spectrumWidth < 10 {
-		spectrumWidth = 100 // default if terminal size not set
-	} else if spectrumWidth > 100 {
-		spectrumWidth = 100
-	}
+	// Final spectrum - zeroed out to show clean state. Derive the width from the
+	// shared box width (outer minus the 1-cell border and 2 columns of padding on
+	// each side) so the spectrum fills the box consistently and never exceeds the
+	// content area, which would wrap.
+	spectrumWidth := max(m.boxContentWidth()-6, 10)
 	s.WriteString("\n\n")
 	s.WriteString(lipgloss.NewStyle().Faint(true).Render("Live Visualisation:"))
 	s.WriteString("\n")
@@ -420,6 +447,7 @@ func (m *Model) renderFinalProgress() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(theme.FireOrange).
 		Padding(1, 2).
+		Width(m.boxContentWidth()).
 		Render(s.String())
 }
 
@@ -473,6 +501,7 @@ func (m *Model) renderProgress() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(theme.FireRed).
 		Padding(1, 2).
+		Width(m.boxContentWidth()).
 		Render(s.String())
 }
 
@@ -520,10 +549,9 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 
 	// Progress is based on video frames (audio is encoded alongside each frame)
 	percent := float64(m.renderState.Frame) / float64(m.renderState.TotalFrames)
-	currentPhase := fmt.Sprintf("Frame %d of %d", m.renderState.Frame, m.renderState.TotalFrames)
 
 	progressBar := m.progressBar.View()
-	s.WriteString("Progress: ")
+	s.WriteString("Progress ")
 	s.WriteString(progressBar)
 	fmt.Fprintf(s, "  %d%%", int(percent*100))
 	s.WriteString("\n\n")
@@ -550,58 +578,57 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 		}
 	}
 
-	timingInfo := fmt.Sprintf("Time: %s / %s  │  Speed: %.1fx realtime  │  ETA: %s",
-		formatDuration(elapsed),
-		formatDuration(estimatedTotal),
-		speed,
-		formatDuration(eta))
+	// Three stat gauge cards joined horizontally: Time, Speed (with a live
+	// sparkline of recent speed samples), and ETA. The card inner widths are
+	// chosen so the joined row fits the box content area without wrapping.
+	timeCard := gaugeCard("⏱", "Time", fmt.Sprintf("%s / %s",
+		formatDuration(elapsed), formatDuration(estimatedTotal)), 14)
+	speedValue := fmt.Sprintf("%.1fx %s", speed, sparkline(m.speedHistory))
+	speedCard := gaugeCard("⚡", "Speed", speedValue, 12)
+	etaCard := gaugeCard("⛳", "ETA", formatDuration(eta), 13)
 
-	s.WriteString(lipgloss.NewStyle().Faint(true).Render(timingInfo))
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", etaCard))
+
+	// Frame counter and a compact source/codec/size summary on one line, below the
+	// gauge cards.
 	s.WriteString("\n")
+	m.writeFrameSourceLine(s)
+}
 
-	phaseStyle := lipgloss.NewStyle().Faint(true).Italic(true)
-	s.WriteString(phaseStyle.Render(currentPhase))
+// recordSpeedSample appends the current realtime speed to the bounded history
+// used by the Speed card's sparkline, dropping the oldest sample past the cap.
+// Mirrors the speed computed in renderRenderingProgress.
+func (m *Model) recordSpeedSample(msg RenderProgress) {
+	if msg.TotalFrames == 0 {
+		return
+	}
+	elapsed := time.Since(m.pass2StartTime)
+	if m.pass2StartTime.IsZero() {
+		elapsed = msg.Elapsed
+	}
+	if elapsed <= 0 {
+		return
+	}
+	videoEncodedSoFar := time.Duration(msg.Frame) * time.Second / config.FPS
+	speed := float64(videoEncodedSoFar) / float64(elapsed)
+
+	m.speedHistory = append(m.speedHistory, speed)
+	if len(m.speedHistory) > speedHistoryCap {
+		m.speedHistory = m.speedHistory[len(m.speedHistory)-speedHistoryCap:]
+	}
 }
 
 func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	s.WriteString(lipgloss.NewStyle().Foreground(theme.FireOrange).Render("Live Visualisation:"))
 	s.WriteString("\n")
 
-	// Use full width for spectrum (64 bars matches the actual bar count)
-	spectrumWidth := 64
-	if m.width > 10 {
-		spectrumWidth = min(m.width-10, 64)
-	}
-	// Draw the spring positions, not the raw target heights, so bars ease toward
-	// new BarHeights over successive ticks. The springs are advanced only in the
-	// tickMsg case; renderSpectrum stays pure over its inputs.
+	// Size the spectrum to the preview content width so it no longer drives the
+	// box width. Draw the spring positions, not the raw target heights, so bars
+	// ease toward new BarHeights over successive ticks. The springs are advanced
+	// only in the tickMsg case; renderSpectrum stays pure over its inputs.
+	spectrumWidth := min(m.spectrumWidth(), config.NumBars)
 	spectrum := renderSpectrum(m.spectrumPos, spectrumWidth)
-
-	var rightCol strings.Builder
-	if m.renderState.FileSize > 0 || m.renderState.VideoCodec != "" || m.renderState.AudioCodec != "" {
-		labelStyle := lipgloss.NewStyle().Foreground(theme.WarmGray)
-		valueStyle := lipgloss.NewStyle().Bold(true)
-
-		rightCol.WriteString(labelStyle.Render("File:  "))
-		rightCol.WriteString(valueStyle.Render(formatBytes(m.renderState.FileSize)))
-		rightCol.WriteString("\n")
-
-		if m.renderState.VideoCodec != "" {
-			rightCol.WriteString(labelStyle.Render("Video: "))
-			rightCol.WriteString(valueStyle.Render(m.renderState.VideoCodec))
-			rightCol.WriteString("\n")
-		}
-
-		if m.renderState.AudioCodec != "" {
-			rightCol.WriteString(labelStyle.Render("Audio: "))
-			rightCol.WriteString(valueStyle.Render(m.renderState.AudioCodec))
-		}
-	}
-
-	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
-		spectrum,
-		"  ",
-		rightCol.String()))
+	s.WriteString(spectrum)
 
 	// Video preview
 	if !m.noPreview {
@@ -619,7 +646,85 @@ func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	}
 }
 
+// spectrumWidth returns the spectrum width: the preview content width when the
+// preview is shown, otherwise the full box content area. Keeps the spectrum from
+// driving the overall box width.
+func (m *Model) spectrumWidth() int {
+	if !m.noPreview {
+		return DefaultPreviewConfig().Width
+	}
+	return max(m.boxContentWidth()-6, 10)
+}
+
+// writeFrameSourceLine writes the combined "🎞 Frame X / Y    ♪ duration · video
+// · audio · size" line. The source summary is omitted until any codec/size data
+// arrives.
+func (m *Model) writeFrameSourceLine(s *strings.Builder) {
+	labelStyle := lipgloss.NewStyle().Foreground(theme.WarmGray)
+	valueStyle := lipgloss.NewStyle().Bold(true)
+
+	frame := lipgloss.JoinHorizontal(lipgloss.Top,
+		labelStyle.Render("🎞 Frame "),
+		valueStyle.Render(fmt.Sprintf("%d / %d", m.renderState.Frame, m.renderState.TotalFrames)),
+	)
+
+	var parts []string
+	if m.audioProfile != nil {
+		parts = append(parts, fmt.Sprintf("%.1fs", m.audioProfile.Duration.Seconds()))
+	}
+	if m.renderState.VideoCodec != "" {
+		parts = append(parts, compactCodec(m.renderState.VideoCodec))
+	}
+	if m.renderState.AudioCodec != "" {
+		parts = append(parts, compactCodec(m.renderState.AudioCodec))
+	}
+	if m.renderState.FileSize > 0 {
+		parts = append(parts, formatBytes(m.renderState.FileSize))
+	}
+
+	s.WriteString(frame)
+	if len(parts) > 0 {
+		source := lipgloss.JoinHorizontal(lipgloss.Top,
+			labelStyle.Render("    ♪ "),
+			valueStyle.Render(strings.Join(parts, " · ")),
+		)
+		s.WriteString(source)
+	}
+}
+
 // Helper functions
+
+// maxLineWidth returns the widest rendered line in s, measured in terminal
+// cells. Used to size the spectrum so the spectrum+stats row fits the box.
+func maxLineWidth(s string) int {
+	maxw := 0
+	for line := range strings.SplitSeq(s, "\n") {
+		if w := lipgloss.Width(line); w > maxw {
+			maxw = w
+		}
+	}
+	return maxw
+}
+
+// compactCodec shortens a codec description for the one-line source summary by
+// dropping the resolution/layout suffix: "H.264 1920×1080" → "H.264" and
+// "AAC 44.1kHz stereo" → "AAC 44.1kHz". Tokens beyond a ×-bearing or layout
+// token are dropped so the frame/source line never wraps the box.
+func compactCodec(codec string) string {
+	fields := strings.Fields(codec)
+	if len(fields) == 0 {
+		return codec
+	}
+	kept := []string{fields[0]}
+	for _, f := range fields[1:] {
+		// Stop at a resolution token (contains ×) or a channel-layout word.
+		if strings.ContainsRune(f, '×') || f == "mono" || f == "stereo" {
+			break
+		}
+		kept = append(kept, f)
+	}
+	return strings.Join(kept, " ")
+}
 
 func formatDuration(d time.Duration) string {
 	if d == 0 {

@@ -11,50 +11,77 @@ import (
 	"github.com/linuxmatters/jivefire/internal/theme"
 )
 
+// Audio-meter display ranges. These map each metric onto its level-meter fill
+// and are VISUAL INDICATORS ONLY, not calibrated scales: the bounds are picked
+// so typical podcast values land partway along the bar rather than pinned at 0%
+// or 100%. They do not represent the metric's true physical range.
+const (
+	meterPeakMinDB  = -40.0 // dB: quiet peak floor → empty
+	meterPeakMaxDB  = 0.0   // dB: full-scale peak → full
+	meterRMSMinDB   = -50.0 // dB: very quiet RMS floor → empty
+	meterRMSMaxDB   = -6.0  // dB: loud RMS ceiling → full
+	meterRangeMinDB = 0.0   // dB: no dynamic range → empty
+	meterRangeMaxDB = 70.0  // dB: wide dynamic range → full
+	meterScaleMin   = 0.0   // scale factor floor → empty
+	meterScaleMax   = 2.0   // scale factor ceiling → full
+
+	// Meter geometry shared across the two audio rows so their bars and values
+	// line up. Two metrics per row at this width fit the 74-cell content area.
+	meterBarWidth   = 10
+	meterLabelWidth = 5
+	// meterLeftValueWidth pads the left-column metric value (Peak/RMS) so the
+	// right-column meter starts at a fixed x on both rows. Wide enough for
+	// "-XX.X" dB readings.
+	meterLeftValueWidth = 6
+)
+
 func (m *Model) renderAudioProfile(s *strings.Builder) {
-	labelStyle := lipgloss.NewStyle().Faint(true)
-	valueStyle := lipgloss.NewStyle()
-	headerStyle := lipgloss.NewStyle().Faint(true).Bold(true)
-
-	header := headerStyle.Render("Audio")
-
 	if m.audioProfile == nil {
 		// Placeholder during Pass 1: header, divider, then the italic notice.
+		headerStyle := lipgloss.NewStyle().Faint(true).Bold(true)
 		placeholderStyle := lipgloss.NewStyle().Faint(true).Italic(true)
 		s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
-			header,
+			headerStyle.Render("Audio"),
 			" │ ",
 			placeholderStyle.Render("Analysing..."),
 		))
 		return
 	}
 
-	// Populated row: each metric is a label/value cell joined with consistent
-	// two-space gaps. JoinHorizontal aligns the cells so the divider and metrics
-	// line up regardless of value width. Same labels, units and formatting as the
-	// previous manual WriteString row (Peak/RMS/Range in dB, Scale to 3 dp).
-	cell := func(label, value string) string {
-		return lipgloss.JoinHorizontal(lipgloss.Top,
-			labelStyle.Render(label),
-			" ",
-			valueStyle.Render(value),
-		)
+	// Left-column values are padded to a fixed width so the right-column meters
+	// (Range, Scale) start at the same x on both rows.
+	leftValue := lipgloss.NewStyle().Width(meterLeftValueWidth)
+	valueStyle := lipgloss.NewStyle()
+	frac := func(v, lo, hi float64) float64 {
+		if hi <= lo {
+			return 0
+		}
+		return (v - lo) / (hi - lo)
 	}
 
-	gap := "  "
-	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top,
-		header,
-		" │ ",
-		valueStyle.Render(fmt.Sprintf("%.1fs", m.audioProfile.Duration.Seconds())),
-		gap,
-		cell("Peak:", fmt.Sprintf("%.1f dB", m.audioProfile.PeakLevel)),
-		gap,
-		cell("RMS:", fmt.Sprintf("%.1f dB", m.audioProfile.RMSLevel)),
-		gap,
-		cell("Range:", fmt.Sprintf("%.1f dB", m.audioProfile.DynamicRange)),
-		gap,
-		cell("Scale:", fmt.Sprintf("%.3f", m.audioProfile.OptimalScale)),
-	))
+	peak := meter("Peak",
+		frac(m.audioProfile.PeakLevel, meterPeakMinDB, meterPeakMaxDB),
+		meterBarWidth, meterLabelWidth,
+		leftValue.Render(fmt.Sprintf("%.1f", m.audioProfile.PeakLevel)))
+	rangeM := meter("Range",
+		frac(m.audioProfile.DynamicRange, meterRangeMinDB, meterRangeMaxDB),
+		meterBarWidth, meterLabelWidth,
+		valueStyle.Render(fmt.Sprintf("%.1f dB", m.audioProfile.DynamicRange)))
+	rms := meter("RMS",
+		frac(m.audioProfile.RMSLevel, meterRMSMinDB, meterRMSMaxDB),
+		meterBarWidth, meterLabelWidth,
+		leftValue.Render(fmt.Sprintf("%.1f", m.audioProfile.RMSLevel)))
+	scale := meter("Scale",
+		frac(m.audioProfile.OptimalScale, meterScaleMin, meterScaleMax),
+		meterBarWidth, meterLabelWidth,
+		valueStyle.Render(fmt.Sprintf("%.3f", m.audioProfile.OptimalScale)))
+
+	// Two metrics per row: Peak | Range, then RMS | Scale. A fixed gap between
+	// the columns keeps both rows aligned regardless of value width.
+	gap := "   "
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, peak, gap, rangeM))
+	s.WriteString("\n")
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, rms, gap, scale))
 }
 
 func (m *Model) renderComplete() string {
@@ -190,6 +217,7 @@ func (m *Model) renderComplete() string {
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(theme.FireOrange).
 		Padding(1, 1).
+		Width(m.boxContentWidth()).
 		Render(s.String()) + "\n"
 }
 
