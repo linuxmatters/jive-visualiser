@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
@@ -129,12 +130,27 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 // Stereo input is automatically downmixed to mono.
 // Returns io.EOF when no more samples are available.
 func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
+	result := make([]float64, numSamples)
+	n, err := d.ReadInto(result)
+	if err != nil {
+		return nil, err
+	}
+	return result[:n], nil
+}
+
+// ReadInto fills dst with the next samples as float64, decoding more from the
+// stream as needed, and returns the number of samples written. Samples are
+// copied straight into dst with no intermediate allocation. Stereo input is
+// automatically downmixed to mono. At end of stream it returns the final
+// partial count, then io.EOF once the sample buffer is exhausted.
+func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
+	numSamples := len(dst)
+
 	// First, try to satisfy request from buffer
 	if len(d.sampleBuffer) >= numSamples {
-		result := make([]float64, numSamples)
-		copy(result, d.sampleBuffer[:numSamples])
+		copy(dst, d.sampleBuffer[:numSamples])
 		d.sampleBuffer = d.sampleBuffer[numSamples:]
-		return result, nil
+		return numSamples, nil
 	}
 
 	// Need to decode more samples
@@ -148,22 +164,21 @@ func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
 				if !d.drained {
 					d.drained = true
 					if err := d.flushDecoder(); err != nil {
-						return nil, err
+						return 0, err
 					}
 				}
 				if len(d.sampleBuffer) > 0 {
 					n := min(numSamples, len(d.sampleBuffer))
-					result := make([]float64, n)
-					copy(result, d.sampleBuffer[:n])
+					copy(dst, d.sampleBuffer[:n])
 					d.sampleBuffer = d.sampleBuffer[n:]
-					return result, nil
+					return n, nil
 				}
-				return nil, io.EOF
+				return 0, io.EOF
 			}
-			return nil, fmt.Errorf("failed to read packet: %w", err)
+			return 0, fmt.Errorf("failed to read packet: %w", err)
 		}
 		if ret < 0 {
-			return nil, fmt.Errorf("failed to read packet: error code %d", ret)
+			return 0, fmt.Errorf("failed to read packet: error code %d", ret)
 		}
 
 		// Skip non-audio packets
@@ -176,7 +191,7 @@ func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
 		_, err = ffmpeg.AVCodecSendPacket(d.codecCtx, d.packet)
 		ffmpeg.AVPacketUnref(d.packet)
 		if err != nil {
-			return nil, fmt.Errorf("failed to send packet to decoder: %w", err)
+			return 0, fmt.Errorf("failed to send packet to decoder: %w", err)
 		}
 
 		// Receive decoded frames
@@ -186,25 +201,22 @@ func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
 				if errors.Is(err, ffmpeg.AVErrorEOF) || errors.Is(err, ffmpeg.EAgain) {
 					break
 				}
-				return nil, fmt.Errorf("failed to receive frame: %w", err)
+				return 0, fmt.Errorf("failed to receive frame: %w", err)
 			}
 
-			// Extract samples and add to buffer
-			samples, err := d.extractSamples()
-			if err != nil {
-				return nil, fmt.Errorf("failed to extract samples: %w", err)
+			// Decode samples directly into the buffer tail
+			if err := d.extractSamples(); err != nil {
+				return 0, fmt.Errorf("failed to extract samples: %w", err)
 			}
-			d.sampleBuffer = append(d.sampleBuffer, samples...)
 
 			ffmpeg.AVFrameUnref(d.frame)
 		}
 	}
 
-	// Return requested samples from buffer
-	result := make([]float64, numSamples)
-	copy(result, d.sampleBuffer[:numSamples])
+	// Copy requested samples from buffer
+	copy(dst, d.sampleBuffer[:numSamples])
 	d.sampleBuffer = d.sampleBuffer[numSamples:]
-	return result, nil
+	return numSamples, nil
 }
 
 // flushDecoder sends a NULL packet to enter draining mode and appends every
@@ -223,11 +235,9 @@ func (d *StreamingReader) flushDecoder() error {
 			return fmt.Errorf("failed to receive frame: %w", err)
 		}
 
-		samples, err := d.extractSamples()
-		if err != nil {
+		if err := d.extractSamples(); err != nil {
 			return fmt.Errorf("failed to extract samples: %w", err)
 		}
-		d.sampleBuffer = append(d.sampleBuffer, samples...)
 
 		ffmpeg.AVFrameUnref(d.frame)
 	}
@@ -271,9 +281,10 @@ func sampleDecoder(sampleFormat ffmpeg.AVSampleFormat) (func([]byte, int) float6
 	}
 }
 
-// extractSamples extracts float64 samples from the current frame.
+// extractSamples decodes float64 samples from the current frame straight onto
+// the tail of d.sampleBuffer, avoiding a per-frame temporary allocation.
 // Stereo is automatically downmixed to mono.
-func (d *StreamingReader) extractSamples() ([]float64, error) {
+func (d *StreamingReader) extractSamples() error {
 	nbSamples := d.frame.NbSamples()
 	// Frame format is always a valid AVSampleFormat enum, within int32 range.
 	sampleFormat := ffmpeg.AVSampleFormat(d.frame.Format()) //nolint:gosec
@@ -281,10 +292,8 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 
 	decode, bps, err := sampleDecoder(sampleFormat)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	samples := make([]float64, nbSamples)
 
 	// Determine if format is planar (one sample plane per channel)
 	var isPlanar bool
@@ -298,10 +307,11 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 		leftPtr := d.frame.Data().Get(0)
 		rightPtr := d.frame.Data().Get(1)
 		if leftPtr == nil || rightPtr == nil {
-			return nil, fmt.Errorf("missing channel data")
+			return fmt.Errorf("missing channel data")
 		}
 		leftBuf := unsafe.Slice((*byte)(leftPtr), nbSamples*bps)
 		rightBuf := unsafe.Slice((*byte)(rightPtr), nbSamples*bps)
+		samples := d.growSampleBuffer(nbSamples)
 		for i := range nbSamples {
 			samples[i] = (decode(leftBuf, i*bps) + decode(rightBuf, i*bps)) / 2
 		}
@@ -309,9 +319,10 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 	case isPlanar && channels == 1:
 		dataPtr := d.frame.Data().Get(0)
 		if dataPtr == nil {
-			return nil, fmt.Errorf("no data in frame")
+			return fmt.Errorf("no data in frame")
 		}
 		buf := unsafe.Slice((*byte)(dataPtr), nbSamples*bps)
+		samples := d.growSampleBuffer(nbSamples)
 		for i := range nbSamples {
 			samples[i] = decode(buf, i*bps)
 		}
@@ -320,10 +331,11 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 		// Interleaved formats
 		dataPtr := d.frame.Data().Get(0)
 		if dataPtr == nil {
-			return nil, fmt.Errorf("no data in frame")
+			return fmt.Errorf("no data in frame")
 		}
 		stride := bps * channels
 		buf := unsafe.Slice((*byte)(dataPtr), nbSamples*stride)
+		samples := d.growSampleBuffer(nbSamples)
 		if channels == 1 {
 			for i := range nbSamples {
 				samples[i] = decode(buf, i*stride)
@@ -335,7 +347,15 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 		}
 	}
 
-	return samples, nil
+	return nil
+}
+
+// growSampleBuffer extends d.sampleBuffer by n elements and returns the newly
+// added tail region for in-place writing, reusing spare capacity where possible.
+func (d *StreamingReader) growSampleBuffer(n int) []float64 {
+	start := len(d.sampleBuffer)
+	d.sampleBuffer = slices.Grow(d.sampleBuffer, n)[:start+n]
+	return d.sampleBuffer[start:]
 }
 
 // SampleRate returns the audio sample rate in Hz.

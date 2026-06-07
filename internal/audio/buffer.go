@@ -6,21 +6,20 @@ import (
 	"io"
 )
 
-// readIntoBuffer fills buf from reader via repeated ReadChunk calls. Returns the
+// readIntoBuffer fills buf from reader via repeated ReadInto calls. Returns the
 // number of samples read and the raw error from the underlying reader, including
 // io.EOF, so callers can apply their own end-of-file convention.
 func readIntoBuffer(reader *StreamingReader, buf []float64) (int, error) {
 	var total int
 	for total < len(buf) {
-		chunk, err := reader.ReadChunk(len(buf) - total)
+		n, err := reader.ReadInto(buf[total:])
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return total, io.EOF
 			}
 			return total, fmt.Errorf("reading audio chunk: %w", err)
 		}
-		copy(buf[total:], chunk)
-		total += len(chunk)
+		total += n
 	}
 	return total, nil
 }

@@ -59,8 +59,15 @@ func RGBToCr(r, g, b int32) uint8 {
 	return uint8(cr) //nolint:gosec // value is clamped by branch above
 }
 
-// ParallelRows executes fn across height rows using all CPU cores.
-func ParallelRows(height int, fn func(startY, endY int)) {
+// rowRange is a precomputed row partition reused across every frame.
+type rowRange struct {
+	startY, endY int
+}
+
+// partitionRows splits height rows across numCPU workers using the same rules
+// ParallelRows uses: even slices of rowsPerWorker, a < 1 fallback that gives
+// one row per worker, and the last worker absorbing the remainder.
+func partitionRows(height int) []rowRange {
 	numCPU := runtime.NumCPU()
 	rowsPerWorker := height / numCPU
 	if rowsPerWorker < 1 {
@@ -68,21 +75,88 @@ func ParallelRows(height int, fn func(startY, endY int)) {
 		numCPU = height
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(numCPU)
-
+	ranges := make([]rowRange, numCPU)
 	for worker := range numCPU {
 		startY := worker * rowsPerWorker
 		endY := startY + rowsPerWorker
 		if worker == numCPU-1 {
 			endY = height
 		}
+		ranges[worker] = rowRange{startY: startY, endY: endY}
+	}
+	return ranges
+}
 
+// ParallelRows executes fn across height rows using all CPU cores.
+//
+// This spawns goroutines per call. For the per-frame encoder hot path use a
+// RowPool (NewRowPool) instead, which reuses long-lived workers.
+func ParallelRows(height int, fn func(startY, endY int)) {
+	ranges := partitionRows(height)
+
+	var wg sync.WaitGroup
+	wg.Add(len(ranges))
+
+	for _, r := range ranges {
 		go func(startY, endY int) {
 			defer wg.Done()
 			fn(startY, endY)
-		}(startY, endY)
+		}(r.startY, r.endY)
 	}
 
 	wg.Wait()
+}
+
+// rowJob is a unit of work dispatched to a pool worker.
+type rowJob struct {
+	r  rowRange
+	fn func(startY, endY int)
+	wg *sync.WaitGroup
+}
+
+// RowPool runs row-range work across a fixed set of long-lived worker
+// goroutines. The row partition is computed once for the configured height and
+// reused for every Run call, avoiding the per-frame goroutine create/destroy
+// cost of ParallelRows on the encoder hot path.
+type RowPool struct {
+	ranges []rowRange
+	jobs   chan rowJob
+}
+
+// NewRowPool creates a pool with one worker per row range for the given height.
+// The workers are daemon goroutines; in a single-shot CLI they are reaped on
+// process exit. Call Close to stop them explicitly when reuse is finished.
+func NewRowPool(height int) *RowPool {
+	ranges := partitionRows(height)
+	p := &RowPool{
+		ranges: ranges,
+		jobs:   make(chan rowJob),
+	}
+	for range ranges {
+		go p.worker()
+	}
+	return p
+}
+
+func (p *RowPool) worker() {
+	for job := range p.jobs {
+		job.fn(job.r.startY, job.r.endY)
+		job.wg.Done()
+	}
+}
+
+// Run executes fn across the precomputed row partition and blocks until every
+// range completes. Output is identical to ParallelRows for the same height.
+func (p *RowPool) Run(fn func(startY, endY int)) {
+	var wg sync.WaitGroup
+	wg.Add(len(p.ranges))
+	for _, r := range p.ranges {
+		p.jobs <- rowJob{r: r, fn: fn, wg: &wg}
+	}
+	wg.Wait()
+}
+
+// Close stops the pool's worker goroutines. The pool must not be used after.
+func (p *RowPool) Close() {
+	close(p.jobs)
 }

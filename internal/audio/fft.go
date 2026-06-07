@@ -89,8 +89,8 @@ func RearrangeFrequenciesCenterOut(barHeights []float64, result []float64) {
 type Processor struct {
 	// Pre-computed Hanning window coefficients (avoids trig per sample)
 	hanningWindow []float64
-	// Reusable buffer for windowed output (avoids allocation per ProcessChunk)
-	windowedBuffer []float64
+	// Reusable complex buffer for the in-place FFT (avoids allocation per ProcessChunk)
+	fftInput []complex128
 }
 
 // NewProcessor creates a new audio processor with pre-computed Hanning window
@@ -102,36 +102,35 @@ func NewProcessor() *Processor {
 		window[i] = 0.5 * (1 - math.Cos(2*math.Pi*float64(i)/n))
 	}
 	return &Processor{
-		hanningWindow:  window,
-		windowedBuffer: make([]float64, config.FFTSize),
+		hanningWindow: window,
+		fftInput:      make([]complex128, config.FFTSize),
 	}
 }
 
 // ProcessChunk performs FFT on a chunk of audio samples.
 // Uses pre-computed Hanning window coefficients for better performance.
+// The returned slice is a buffer reused across calls; callers must fully
+// consume it before the next ProcessChunk call.
 func (p *Processor) ProcessChunk(samples []float64) []complex128 {
-	// Pad if needed
-	chunk := samples
-	if len(chunk) < config.FFTSize {
-		padded := make([]float64, config.FFTSize)
-		copy(padded, chunk)
-		chunk = padded
+	// Clamp to the window size; short final chunks are zero-padded by the loop below.
+	n := min(len(samples), config.FFTSize)
+
+	// Apply the Hanning window and fold the real→complex conversion into the
+	// same pass, writing directly into the reusable in-place FFT buffer.
+	for i := range n {
+		p.fftInput[i] = complex(samples[i]*p.hanningWindow[i], 0)
+	}
+	// Zero-pad any remainder so samples beyond the input are treated as silence.
+	for i := n; i < config.FFTSize; i++ {
+		p.fftInput[i] = 0
 	}
 
-	// Apply Hanning window using pre-computed coefficients (faster than trig per sample)
-	for i := range config.FFTSize {
-		p.windowedBuffer[i] = chunk[i] * p.hanningWindow[i]
-	}
-
-	// Convert to complex128 for gofft which works in-place, modifying the input array
-	fftInput := gofft.Float64ToComplex128Array(p.windowedBuffer)
-
-	// Compute FFT in-place
-	err := gofft.FFT(fftInput)
+	// Compute FFT in-place on the reusable buffer
+	err := gofft.FFT(p.fftInput)
 	if err != nil {
 		// Should never happen with power-of-2 size
 		panic("FFT failed: " + err.Error())
 	}
 
-	return fftInput
+	return p.fftInput
 }

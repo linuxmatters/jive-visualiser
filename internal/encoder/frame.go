@@ -12,7 +12,7 @@ import (
 
 // convertRGBAToYUV converts RGBA data directly to YUV420P (planar) format.
 // Skips the intermediate RGB24 buffer allocation for significantly faster software encoding.
-func convertRGBAToYUV(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width, height int) {
+func convertRGBAToYUV(pool *yuv.RowPool, rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width int) {
 	yPlane := yuvFrame.Data().Get(0)
 	uPlane := yuvFrame.Data().Get(1)
 	vPlane := yuvFrame.Data().Get(2)
@@ -21,7 +21,7 @@ func convertRGBAToYUV(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 	uLinesize := yuvFrame.Linesize().Get(1)
 	vLinesize := yuvFrame.Linesize().Get(2)
 
-	yuv.ParallelRows(height, func(startY, endY int) {
+	pool.Run(func(startY, endY int) {
 		// Align startY to even for correct UV row calculation
 		evenStart := startY
 		if evenStart&1 != 0 {
@@ -76,14 +76,14 @@ func convertRGBAToYUV(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 
 // convertRGBAToNV12 converts RGBA data to NV12 (semi-planar) format.
 // NV12 has a Y plane followed by interleaved UV plane.
-func convertRGBAToNV12(rgbaData []byte, nv12Frame *ffmpeg.AVFrame, width, height int) {
+func convertRGBAToNV12(pool *yuv.RowPool, rgbaData []byte, nv12Frame *ffmpeg.AVFrame, width int) {
 	yPlane := nv12Frame.Data().Get(0)
 	uvPlane := nv12Frame.Data().Get(1)
 
 	yLinesize := nv12Frame.Linesize().Get(0)
 	uvLinesize := nv12Frame.Linesize().Get(1)
 
-	yuv.ParallelRows(height, func(startY, endY int) {
+	pool.Run(func(startY, endY int) {
 		// Align startY to even for correct UV row calculation
 		evenStart := startY
 		if evenStart&1 != 0 {

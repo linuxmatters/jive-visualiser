@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
+	"github.com/linuxmatters/jivefire/internal/yuv"
 )
 
 // checkFFmpeg provides consistent error handling for FFmpeg API calls.
@@ -131,6 +132,18 @@ type Encoder struct {
 	// Pre-allocated reusable NV12 frame for parallel Go conversion (Vulkan and QSV)
 	hwNV12Frame *ffmpeg.AVFrame
 
+	// Pre-allocated reusable software YUV420P frame (libx264 path)
+	swYUVFrame *ffmpeg.AVFrame
+
+	// Pre-allocated reusable RGBA frame (NVENC path)
+	rgbaFrame *ffmpeg.AVFrame
+
+	// Pre-allocated reusable packet for the video receive loop
+	pkt *ffmpeg.AVPacket
+
+	// Persistent worker pool for per-frame RGB→YUV row conversion
+	rowPool *yuv.RowPool
+
 	// Input pixel format (RGBA for NVENC, NV12 for Vulkan/QSV, YUV420P for software)
 	inputPixFmt ffmpeg.AVPixelFormat
 
@@ -171,6 +184,10 @@ func (e *Encoder) Initialize() error {
 
 	// Suppress FFmpeg log output to prevent interference with TUI
 	ffmpeg.AVLogSetLevel(ffmpeg.AVLogQuiet)
+
+	// Persistent worker pool for per-frame RGB→YUV conversion. The row
+	// partition never changes, so reuse long-lived workers across all frames.
+	e.rowPool = yuv.NewRowPool(e.config.Height)
 
 	// Convert Go string to C string
 	outputPath := ffmpeg.ToCStr(e.config.OutputPath)
@@ -463,10 +480,30 @@ func (e *Encoder) setupHWFramesContext(hwPixFmt ffmpeg.AVPixelFormat) error {
 // Vulkan/QSV/VA-API: require NV12 uploaded to GPU via hardware frames context
 // Software: uses YUV420P with CPU-side RGB→YUV conversion
 func (e *Encoder) configurePixelFormat() error {
+	// Pre-allocate reusable packet for the video receive loop
+	e.pkt = ffmpeg.AVPacketAlloc()
+	if e.pkt == nil {
+		return fmt.Errorf("failed to allocate reusable packet")
+	}
+
 	if e.hwEncoder == nil {
 		// Software encoder (libx264)
 		e.inputPixFmt = ffmpeg.AVPixFmtYuv420P
 		e.videoCodec.SetPixFmt(ffmpeg.AVPixFmtYuv420P)
+
+		// Pre-allocate reusable YUV420P frame for CPU-side conversion
+		e.swYUVFrame = ffmpeg.AVFrameAlloc()
+		if e.swYUVFrame == nil {
+			return fmt.Errorf("failed to allocate reusable YUV frame")
+		}
+		e.swYUVFrame.SetWidth(e.config.Width)
+		e.swYUVFrame.SetHeight(e.config.Height)
+		e.swYUVFrame.SetFormat(int(ffmpeg.AVPixFmtYuv420P))
+
+		ret, err := ffmpeg.AVFrameGetBuffer(e.swYUVFrame, 0)
+		if err := checkFFmpeg(ret, err, "allocate YUV buffer"); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -476,6 +513,20 @@ func (e *Encoder) configurePixelFormat() error {
 		e.inputPixFmt = ffmpeg.AVPixFmtRgba
 		e.videoCodec.SetPixFmt(ffmpeg.AVPixFmtRgba)
 		e.videoCodec.SetHwDeviceCtx(ffmpeg.AVBufferRef_(e.hwDeviceCtx))
+
+		// Pre-allocate reusable RGBA frame
+		e.rgbaFrame = ffmpeg.AVFrameAlloc()
+		if e.rgbaFrame == nil {
+			return fmt.Errorf("failed to allocate reusable RGBA frame")
+		}
+		e.rgbaFrame.SetWidth(e.config.Width)
+		e.rgbaFrame.SetHeight(e.config.Height)
+		e.rgbaFrame.SetFormat(int(ffmpeg.AVPixFmtRgba))
+
+		ret, err := ffmpeg.AVFrameGetBuffer(e.rgbaFrame, 0)
+		if err := checkFFmpeg(ret, err, "allocate RGBA buffer"); err != nil {
+			return err
+		}
 
 	case HWAccelVulkan:
 		// Vulkan requires hardware frames context with NV12 software format
@@ -635,31 +686,22 @@ func (e *Encoder) WriteFrameRGBA(rgbaData []byte) error {
 // writeFrameRGBASoftware converts RGBA directly to YUV420P and encodes.
 // This avoids the intermediate RGB24 buffer allocation for ~3% faster software encoding.
 func (e *Encoder) writeFrameRGBASoftware(rgbaData []byte) error {
-	// Allocate YUV frame
-	yuvFrame := ffmpeg.AVFrameAlloc()
-	if yuvFrame == nil {
-		return fmt.Errorf("failed to allocate YUV frame")
-	}
-	defer ffmpeg.AVFrameFree(&yuvFrame)
-
-	yuvFrame.SetWidth(e.config.Width)
-	yuvFrame.SetHeight(e.config.Height)
-	yuvFrame.SetFormat(int(ffmpeg.AVPixFmtYuv420P))
-
-	ret, err := ffmpeg.AVFrameGetBuffer(yuvFrame, 0)
-	if err := checkFFmpeg(ret, err, "allocate YUV buffer"); err != nil {
-		return err
+	// Use pre-allocated YUV frame (configured in configurePixelFormat).
+	// Make writable as the encoder may still hold a reference from the previous frame.
+	yuvFrame := e.swYUVFrame
+	if ret, err := ffmpeg.AVFrameMakeWritable(yuvFrame); err != nil {
+		return checkFFmpeg(ret, err, "make YUV frame writable")
 	}
 
 	// Convert RGBA directly to YUV420P (skips RGB24 intermediate)
-	convertRGBAToYUV(rgbaData, yuvFrame, e.config.Width, e.config.Height)
+	convertRGBAToYUV(e.rowPool, rgbaData, yuvFrame, e.config.Width)
 
 	// Set presentation timestamp
 	yuvFrame.SetPts(e.nextVideoPts)
 	e.nextVideoPts++
 
 	// Send frame to encoder
-	ret, err = ffmpeg.AVCodecSendFrame(e.videoCodec, yuvFrame)
+	ret, err := ffmpeg.AVCodecSendFrame(e.videoCodec, yuvFrame)
 	if err := checkFFmpeg(ret, err, "send frame to encoder"); err != nil {
 		return err
 	}
@@ -671,20 +713,11 @@ func (e *Encoder) writeFrameRGBASoftware(rgbaData []byte) error {
 // writeFrameRGBADirect sends RGBA frame directly to hardware encoder
 // This avoids CPU-side colourspace conversion - GPU handles it
 func (e *Encoder) writeFrameRGBADirect(rgbaData []byte) error {
-	// Allocate RGBA frame
-	rgbaFrame := ffmpeg.AVFrameAlloc()
-	if rgbaFrame == nil {
-		return fmt.Errorf("failed to allocate RGBA frame")
-	}
-	defer ffmpeg.AVFrameFree(&rgbaFrame)
-
-	rgbaFrame.SetWidth(e.config.Width)
-	rgbaFrame.SetHeight(e.config.Height)
-	rgbaFrame.SetFormat(int(ffmpeg.AVPixFmtRgba))
-
-	ret, err := ffmpeg.AVFrameGetBuffer(rgbaFrame, 0)
-	if err := checkFFmpeg(ret, err, "allocate RGBA buffer"); err != nil {
-		return err
+	// Use pre-allocated RGBA frame (configured in configurePixelFormat).
+	// Make writable as the encoder may still hold a reference from the previous frame.
+	rgbaFrame := e.rgbaFrame
+	if ret, err := ffmpeg.AVFrameMakeWritable(rgbaFrame); err != nil {
+		return checkFFmpeg(ret, err, "make RGBA frame writable")
 	}
 
 	// Copy RGBA data to frame
@@ -707,7 +740,7 @@ func (e *Encoder) writeFrameRGBADirect(rgbaData []byte) error {
 	e.nextVideoPts++
 
 	// Send frame to encoder
-	ret, err = ffmpeg.AVCodecSendFrame(e.videoCodec, rgbaFrame)
+	ret, err := ffmpeg.AVCodecSendFrame(e.videoCodec, rgbaFrame)
 	if err := checkFFmpeg(ret, err, "send frame to encoder"); err != nil {
 		return err
 	}
@@ -722,13 +755,12 @@ func (e *Encoder) writeFrameRGBADirect(rgbaData []byte) error {
 // Uses pre-allocated reusable NV12 frame and parallel Go conversion (8.4× faster than SwsScaleFrame)
 func (e *Encoder) writeFrameHWUpload(rgbaData []byte) error {
 	width := e.config.Width
-	height := e.config.Height
 
 	// Use pre-allocated NV12 frame (already configured in setupHWFramesContext)
 	nv12Frame := e.hwNV12Frame
 
 	// Convert RGBA → NV12 using parallel Go conversion (much faster than SwsScaleFrame)
-	convertRGBAToNV12(rgbaData, nv12Frame, width, height)
+	convertRGBAToNV12(e.rowPool, rgbaData, nv12Frame, width)
 
 	// Allocate hardware frame from pool
 	// Note: hwFrame must be allocated per-call as it's returned to pool after encoding
@@ -766,12 +798,10 @@ func (e *Encoder) writeFrameHWUpload(rgbaData []byte) error {
 
 // receiveAndWriteVideoPackets receives encoded packets from video codec and writes to output
 func (e *Encoder) receiveAndWriteVideoPackets() error {
+	pkt := e.pkt
 	for {
-		pkt := ffmpeg.AVPacketAlloc()
-
 		_, err := ffmpeg.AVCodecReceivePacket(e.videoCodec, pkt)
 		if err != nil {
-			ffmpeg.AVPacketFree(&pkt)
 			// EAGAIN and EOF are expected - means no more packets available
 			if errors.Is(err, ffmpeg.EAgain) || errors.Is(err, ffmpeg.AVErrorEOF) {
 				break
@@ -783,9 +813,10 @@ func (e *Encoder) receiveAndWriteVideoPackets() error {
 		pkt.SetStreamIndex(e.videoStream.Index())
 		ffmpeg.AVPacketRescaleTs(pkt, e.videoCodec.TimeBase(), e.videoStream.TimeBase())
 
-		// Write packet to output
+		// Write packet to output. AVInterleavedWriteFrame consumes the packet's
+		// reference; unref afterwards to reset it for reuse on the next iteration.
 		ret, err := ffmpeg.AVInterleavedWriteFrame(e.formatCtx, pkt)
-		ffmpeg.AVPacketFree(&pkt)
+		ffmpeg.AVPacketUnref(pkt)
 
 		if err := checkFFmpeg(ret, err, "write packet"); err != nil {
 			return err
@@ -1056,6 +1087,30 @@ func (e *Encoder) Close() error {
 	if e.hwNV12Frame != nil {
 		ffmpeg.AVFrameFree(&e.hwNV12Frame)
 		e.hwNV12Frame = nil
+	}
+
+	// Free pre-allocated software YUV420P frame
+	if e.swYUVFrame != nil {
+		ffmpeg.AVFrameFree(&e.swYUVFrame)
+		e.swYUVFrame = nil
+	}
+
+	// Free pre-allocated NVENC RGBA frame
+	if e.rgbaFrame != nil {
+		ffmpeg.AVFrameFree(&e.rgbaFrame)
+		e.rgbaFrame = nil
+	}
+
+	// Free pre-allocated reusable video packet
+	if e.pkt != nil {
+		ffmpeg.AVPacketFree(&e.pkt)
+		e.pkt = nil
+	}
+
+	// Stop the RGB→YUV worker pool
+	if e.rowPool != nil {
+		e.rowPool.Close()
+		e.rowPool = nil
 	}
 
 	// Free format context

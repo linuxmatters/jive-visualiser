@@ -229,9 +229,12 @@ func BenchmarkRGBAToYUVDirect(b *testing.B) {
 	_, _ = ffmpeg.AVFrameGetBuffer(yuvFrame, 0)
 	defer ffmpeg.AVFrameFree(&yuvFrame)
 
+	pool := yuv.NewRowPool(benchHeight)
+	defer pool.Close()
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		convertRGBAToYUV(rgbaData, yuvFrame, benchWidth, benchHeight)
+		convertRGBAToYUV(pool, rgbaData, yuvFrame, benchWidth)
 	}
 }
 
