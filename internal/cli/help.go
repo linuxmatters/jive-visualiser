@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 	"github.com/alecthomas/kong"
 	"github.com/linuxmatters/jivefire/internal/theme"
 )
@@ -62,15 +63,8 @@ func StyledHelpPrinter(options kong.HelpOptions) kong.HelpPrinter {
 			sb.WriteString("\n")
 			sb.WriteString(helpSectionStyle.Render("Arguments:"))
 			sb.WriteString("\n")
-			for _, arg := range args {
-				sb.WriteString("  ")
-				sb.WriteString(helpArgStyle.Render(arg.name))
-				if arg.help != "" {
-					sb.WriteString("  ")
-					sb.WriteString(arg.help)
-				}
-				sb.WriteString("\n")
-			}
+			sb.WriteString(argumentTable(args))
+			sb.WriteString("\n")
 		}
 
 		// Flags section
@@ -79,25 +73,67 @@ func StyledHelpPrinter(options kong.HelpOptions) kong.HelpPrinter {
 			sb.WriteString("\n")
 			sb.WriteString(helpSectionStyle.Render("Flags:"))
 			sb.WriteString("\n")
-			for _, flag := range flags {
-				sb.WriteString("  ")
-				sb.WriteString(helpFlagStyle.Render(flag.flags))
-				if flag.help != "" {
-					sb.WriteString("  ")
-					sb.WriteString(flag.help)
-				}
-				if flag.defaultVal != "" {
-					sb.WriteString(" ")
-					sb.WriteString(helpDefaultStyle.Render("(default: " + flag.defaultVal + ")"))
-				}
-				sb.WriteString("\n")
-			}
+			sb.WriteString(flagTable(flags))
+			sb.WriteString("\n")
 		}
 
 		sb.WriteString("\n")
 		fmt.Fprint(ctx.Stdout, sb.String())
 		return nil
 	})
+}
+
+// helpTable returns a borderless table used purely for column alignment, so the
+// name column (flags or arguments) lines up regardless of name length. Borders
+// and column dividers are off; the StyleFunc keys on the column.
+func helpTable() *table.Table {
+	return table.New().
+		Border(lipgloss.HiddenBorder()).
+		BorderTop(false).
+		BorderBottom(false).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderHeader(false).
+		BorderColumn(false).
+		BorderRow(false)
+}
+
+// argumentTable renders parsed arguments into aligned name/help columns.
+func argumentTable(args []argument) string {
+	t := helpTable().StyleFunc(func(_, col int) lipgloss.Style {
+		if col == 0 {
+			return helpArgStyle.PaddingLeft(2).PaddingRight(2)
+		}
+		return lipgloss.NewStyle()
+	})
+	for _, arg := range args {
+		t.Row(arg.name, arg.help)
+	}
+	return t.Render()
+}
+
+// flagTable renders parsed flags into aligned name/help columns, appending the
+// default-value suffix to the help cell.
+func flagTable(flags []flag) string {
+	t := helpTable().StyleFunc(func(_, col int) lipgloss.Style {
+		if col == 0 {
+			return helpFlagStyle.PaddingLeft(2).PaddingRight(2)
+		}
+		return lipgloss.NewStyle()
+	})
+	for _, f := range flags {
+		help := f.help
+		if f.defaultVal != "" {
+			suffix := helpDefaultStyle.Render("(default: " + f.defaultVal + ")")
+			if help != "" {
+				help += " " + suffix
+			} else {
+				help = suffix
+			}
+		}
+		t.Row(f.flags, help)
+	}
+	return t.Render()
 }
 
 type argument struct {

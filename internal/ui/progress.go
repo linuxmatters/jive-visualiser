@@ -3,14 +3,17 @@ package ui
 import (
 	"fmt"
 	"image"
-	"image/color"
 	"math"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/progress"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/harmonica"
 	"github.com/linuxmatters/jivefire/internal/config"
 	"github.com/linuxmatters/jivefire/internal/theme"
 )
@@ -87,10 +90,52 @@ type AudioProfile struct {
 // progressQuitMsg is sent when it's time to quit after showing completion
 type progressQuitMsg struct{}
 
+// tickMsg drives the UI repaint clock. It fires on a fixed cadence independent
+// of the p.Send data rate so animation and timers advance smoothly between data
+// updates. This tick owns the animation clock; data producers own target state.
+type tickMsg struct{}
+
+// uiTickInterval is the fixed UI repaint cadence (~60ms ≈ 16fps), decoupled from
+// the data-update rate.
+const uiTickInterval = 60 * time.Millisecond
+
+// tickCmd schedules the next UI tick.
+func tickCmd() tea.Cmd {
+	return tea.Tick(uiTickInterval, func(time.Time) tea.Msg {
+		return tickMsg{}
+	})
+}
+
+// keyMap holds the key bindings for the progress UI. It implements the
+// help.KeyMap interface so the help component can render the footer affordance.
+type keyMap struct {
+	Quit key.Binding
+}
+
+// ShortHelp returns the bindings shown in the single-line help footer.
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Quit}
+}
+
+// FullHelp returns the bindings grouped into columns for the expanded help view.
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Quit}}
+}
+
+// keys defines the active key bindings for the progress UI.
+var keys = keyMap{
+	Quit: key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q", "quit"),
+	),
+}
+
 // Model implements the unified Bubbletea model for both passes
 type Model struct {
 	progressBar progress.Model
 	summaryBar  progress.Model
+	help        help.Model
+	spinner     spinner.Model
 	phase       Phase
 
 	// Audio profile (populated during/after Pass 1)
@@ -102,6 +147,14 @@ type Model struct {
 	// Pass 2 state
 	renderState RenderProgress
 	complete    *RenderComplete
+
+	// Spectrum smoothing: one spring per displayed bar with parallel position
+	// and velocity slices. The tick is the sole owner that advances these toward
+	// the producer-owned target m.renderState.BarHeights; renderSpectrum reads
+	// the positions but never allocates or steps the springs.
+	spectrumSprings []harmonica.Spring
+	spectrumPos     []float64
+	spectrumVel     []float64
 
 	// Timing
 	overallStartTime time.Time
@@ -135,20 +188,48 @@ func NewModel(noPreview bool) *Model {
 		progress.WithoutPercentage(),
 	)
 
+	// Help footer styled to the fire palette: the key in FireOrange, the
+	// description in WarmGray.
+	h := help.New()
+	h.Styles.ShortKey = h.Styles.ShortKey.Foreground(theme.FireOrange)
+	h.Styles.ShortDesc = h.Styles.ShortDesc.Foreground(theme.WarmGray)
+	h.Styles.ShortSeparator = h.Styles.ShortSeparator.Foreground(theme.WarmGray)
+
+	// Spinner shown only during dead-air phases (no progress frames yet), styled
+	// to the fire palette.
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(theme.FireOrange)
+
+	// One spring per displayed bar (config.NumBars == 64). Springs share the same
+	// coefficients; positions and velocities are per-bar. Initialised at rest at
+	// zero so the first targets ease in rather than snapping.
+	springs := make([]harmonica.Spring, config.NumBars)
+	for i := range springs {
+		springs[i] = harmonica.NewSpring(spectrumSpringDelta, spectrumSpringFreq, spectrumSpringDamping)
+	}
+
 	return &Model{
 		progressBar:      p,
 		summaryBar:       summaryBar,
+		help:             h,
+		spinner:          sp,
 		phase:            PhaseAnalysis,
 		overallStartTime: time.Now(),
 		pass1StartTime:   time.Now(),
 		completionDelay:  2 * time.Second,
 		noPreview:        noPreview,
+		spectrumSprings:  springs,
+		spectrumPos:      make([]float64, config.NumBars),
+		spectrumVel:      make([]float64, config.NumBars),
 	}
 }
 
-// Init initializes the model
+// Init initializes the model and starts both the self-perpetuating UI tick and
+// the spinner's own tick. The two clocks stay distinct (tickMsg vs
+// spinner.TickMsg); tea.Batch only combines them at startup.
 func (m *Model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(tickCmd(), m.spinner.Tick)
 }
 
 // Update handles messages
@@ -162,6 +243,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AnalysisProgress:
 		m.analysisProgress = msg
+		// Drive the bar's spring toward the new target. The producer owns the
+		// target percent; the bar's own FrameMsg loop animates the fill. Only
+		// applies when a total frame count is known; otherwise the no-total
+		// fallback render branch handles display.
+		if msg.TotalFrames > 0 {
+			percent := float64(msg.Frame) / float64(msg.TotalFrames)
+			return m, m.progressBar.SetPercent(percent)
+		}
 		return m, nil
 
 	case AnalysisComplete:
@@ -181,6 +270,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RenderProgress:
 		m.renderState = msg
+		// Drive the bar's spring toward the new target. The producer owns the
+		// target percent; the bar's own FrameMsg loop animates the fill.
+		if msg.TotalFrames > 0 {
+			percent := float64(msg.Frame) / float64(msg.TotalFrames)
+			return m, m.progressBar.SetPercent(percent)
+		}
 		return m, nil
 
 	case RenderComplete:
@@ -193,14 +288,41 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return progressQuitMsg{}
 		})
 
+	case tickMsg:
+		// Advance the spectrum springs one step toward the producer-owned target,
+		// then re-issue the tick to keep the repaint clock running. The tick is the
+		// SOLE owner that steps the springs; RenderProgress only updates the target
+		// (m.renderState.BarHeights). This avoids a tick-vs-p.Send double-update
+		// race. This clock is distinct from spinner.TickMsg; never re-issue one
+		// from the other.
+		m.advanceSpectrumSprings()
+		return m, tickCmd()
+
+	case spinner.TickMsg:
+		// Advance the spinner's own animation clock. Kept separate from the
+		// tickMsg repaint clock; the spinner re-issues its own tick.
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
+	case progress.FrameMsg:
+		// Advance the progress bar's spring animation. SetPercent (in the
+		// progress cases above) seeds the spring; this FrameMsg loop animates
+		// the fill toward the target between data updates.
+		var cmd tea.Cmd
+		m.progressBar, cmd = m.progressBar.Update(msg)
+		return m, cmd
+
 	case progressQuitMsg:
 		return m, tea.Quit
 
 	case tea.KeyPressMsg:
+		// Any key dismisses the completed view; otherwise only the quit binding
+		// (q / ctrl+c) exits during processing.
 		if m.complete != nil {
 			return m, tea.Quit
 		}
-		if msg.String() == "ctrl+c" {
+		if key.Matches(msg, keys.Quit) {
 			return m, tea.Quit
 		}
 	}
@@ -330,6 +452,13 @@ func (m *Model) renderProgress() string {
 		m.renderSpectrumAndStats(&s)
 	}
 
+	// Help footer — a single, always-present line so the box height is stable
+	// across the Pass 1 → Pass 2 transition (no footer-driven jitter). Styled to
+	// match the fire palette; rendered inside the bordered box so it stays within
+	// the alt screen. Omitted from the post-exit completion summary.
+	s.WriteString("\n\n")
+	s.WriteString(m.renderHelpFooter())
+
 	return lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(theme.FireRed).
@@ -337,30 +466,44 @@ func (m *Model) renderProgress() string {
 		Render(s.String())
 }
 
+// renderHelpFooter renders the single-line quit affordance for the live
+// in-progress UI. It is intentionally excluded from the completion summary.
+func (m *Model) renderHelpFooter() string {
+	return m.help.View(keys)
+}
+
 func (m *Model) renderAnalysisProgress(s *strings.Builder) {
 	switch {
 	case m.analysisProgress.TotalFrames > 0:
 		// We have frame count, show progress bar
 		percent := float64(m.analysisProgress.Frame) / float64(m.analysisProgress.TotalFrames)
-		progressBar := m.progressBar.ViewAs(percent)
+		progressBar := m.progressBar.View()
 
 		s.WriteString("Progress: ")
 		s.WriteString(progressBar)
 		fmt.Fprintf(s, "  %d%%", int(percent*100))
 		s.WriteString("\n\n")
 	case m.analysisProgress.Frame > 0:
-		// No total, show frame count with elapsed time
+		// No total, show frame count with elapsed time. Spinner signals live work.
+		s.WriteString(m.spinner.View())
+		s.WriteString(" ")
 		s.WriteString(lipgloss.NewStyle().Faint(true).Render("Analysing..."))
 		fmt.Fprintf(s, "  %d frames  │  Elapsed: %s\n\n",
 			m.analysisProgress.Frame,
 			formatDuration(m.analysisProgress.Duration))
 	default:
+		// Dead air before any frames arrive: spinner is the only motion.
+		s.WriteString(m.spinner.View())
+		s.WriteString(" ")
 		s.WriteString(lipgloss.NewStyle().Faint(true).Render("Starting analysis...\n\n"))
 	}
 }
 
 func (m *Model) renderRenderingProgress(s *strings.Builder) {
 	if m.renderState.TotalFrames == 0 {
+		// Dead air before the first render frame: spinner is the only motion.
+		s.WriteString(m.spinner.View())
+		s.WriteString(" ")
 		s.WriteString(lipgloss.NewStyle().Faint(true).Render("Starting render...\n\n"))
 		return
 	}
@@ -369,16 +512,19 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 	percent := float64(m.renderState.Frame) / float64(m.renderState.TotalFrames)
 	currentPhase := fmt.Sprintf("Frame %d of %d", m.renderState.Frame, m.renderState.TotalFrames)
 
-	progressBar := m.progressBar.ViewAs(percent)
+	progressBar := m.progressBar.View()
 	s.WriteString("Progress: ")
 	s.WriteString(progressBar)
 	fmt.Fprintf(s, "  %d%%", int(percent*100))
 	s.WriteString("\n\n")
 
-	// Timing information
-	elapsed := m.renderState.Elapsed
-	if elapsed == 0 {
-		elapsed = time.Since(m.pass2StartTime)
+	// Timing information. Derive elapsed from wall-clock at render time so the
+	// ~60ms UI tick advances it (and the ETA/speed derived from it) between
+	// p.Send data updates, rather than freezing on the stale message field.
+	// Fall back to the message field only if pass2StartTime is unset.
+	elapsed := time.Since(m.pass2StartTime)
+	if m.pass2StartTime.IsZero() {
+		elapsed = m.renderState.Elapsed
 	}
 
 	var estimatedTotal, eta time.Duration
@@ -407,40 +553,6 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 	s.WriteString(phaseStyle.Render(currentPhase))
 }
 
-func (m *Model) renderAudioProfile(s *strings.Builder) {
-	labelStyle := lipgloss.NewStyle().Faint(true)
-	valueStyle := lipgloss.NewStyle()
-	headerStyle := lipgloss.NewStyle().Faint(true).Bold(true)
-
-	s.WriteString(headerStyle.Render("Audio"))
-	s.WriteString(" │ ")
-
-	if m.audioProfile != nil {
-		// Populated with real data
-		s.WriteString(valueStyle.Render(fmt.Sprintf("%.1fs", m.audioProfile.Duration.Seconds())))
-		s.WriteString("  ")
-		s.WriteString(labelStyle.Render("Peak:"))
-		s.WriteString(" ")
-		s.WriteString(valueStyle.Render(fmt.Sprintf("%.1f dB", m.audioProfile.PeakLevel)))
-		s.WriteString("  ")
-		s.WriteString(labelStyle.Render("RMS:"))
-		s.WriteString(" ")
-		s.WriteString(valueStyle.Render(fmt.Sprintf("%.1f dB", m.audioProfile.RMSLevel)))
-		s.WriteString("  ")
-		s.WriteString(labelStyle.Render("Range:"))
-		s.WriteString(" ")
-		s.WriteString(valueStyle.Render(fmt.Sprintf("%.1f dB", m.audioProfile.DynamicRange)))
-		s.WriteString("  ")
-		s.WriteString(labelStyle.Render("Scale:"))
-		s.WriteString(" ")
-		s.WriteString(valueStyle.Render(fmt.Sprintf("%.3f", m.audioProfile.OptimalScale)))
-	} else {
-		// Placeholder during Pass 1
-		placeholderStyle := lipgloss.NewStyle().Faint(true).Italic(true)
-		s.WriteString(placeholderStyle.Render("Analysing..."))
-	}
-}
-
 func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	s.WriteString(lipgloss.NewStyle().Foreground(theme.FireOrange).Render("Live Visualisation:"))
 	s.WriteString("\n")
@@ -450,7 +562,10 @@ func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	if m.width > 10 {
 		spectrumWidth = min(m.width-10, 64)
 	}
-	spectrum := renderSpectrum(m.renderState.BarHeights, spectrumWidth)
+	// Draw the spring positions, not the raw target heights, so bars ease toward
+	// new BarHeights over successive ticks. The springs are advanced only in the
+	// tickMsg case; renderSpectrum stays pure over its inputs.
+	spectrum := renderSpectrum(m.spectrumPos, spectrumWidth)
 
 	var rightCol strings.Builder
 	if m.renderState.FileSize > 0 || m.renderState.VideoCodec != "" || m.renderState.AudioCodec != "" {
@@ -494,118 +609,6 @@ func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	}
 }
 
-func (m *Model) renderComplete() string {
-	var s strings.Builder
-
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(theme.FireYellow).
-		Render("✓ Encoding Complete!")
-
-	s.WriteString(title)
-	s.WriteString("\n\n")
-
-	// Styles for output summary
-	dimLabel := lipgloss.NewStyle().Faint(true)
-
-	// Output summary
-	fmt.Fprintf(&s, "%s%s\n", dimLabel.Render("Output:   "), m.complete.OutputFile)
-	if m.complete.EncoderName != "" {
-		fmt.Fprintf(&s, "%s%s\n", dimLabel.Render("Encoder:  "), m.complete.EncoderName)
-	}
-
-	videoDuration := time.Duration(m.complete.TotalFrames) * time.Second / config.FPS
-	fmt.Fprintf(&s, "%s%d frames, %.2f fps average\n",
-		dimLabel.Render("Video:    "),
-		m.complete.TotalFrames,
-		float64(m.complete.TotalFrames)/videoDuration.Seconds())
-	if m.complete.SamplesProcessed > 0 {
-		fmt.Fprintf(&s, "%s%d samples processed\n", dimLabel.Render("Audio:    "), m.complete.SamplesProcessed)
-	}
-	fmt.Fprintf(&s, "%s%.1fs video in %.1fs\n",
-		dimLabel.Render("Duration: "),
-		videoDuration.Seconds(),
-		m.complete.TotalTime.Seconds())
-	fmt.Fprintf(&s, "%s%s\n\n", dimLabel.Render("Size:     "), formatBytes(m.complete.FileSize))
-
-	// Audio Profile section
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.FireOrange)
-	labelStyle := lipgloss.NewStyle().Faint(true)
-	valueStyle := lipgloss.NewStyle()
-	highlightValueStyle := lipgloss.NewStyle().Foreground(theme.FireOrange)
-
-	totalMs := m.complete.TotalTime.Milliseconds()
-	if totalMs == 0 {
-		totalMs = 1
-	}
-
-	// writeRow writes a simple label-value row
-	writeRow := func(label, value string) {
-		fmt.Fprintf(&s, "  %s%s\n", labelStyle.Render(fmt.Sprintf("%-18s", label)), valueStyle.Render(value))
-	}
-
-	// writeBarRow writes a row with percentage and summary bar
-	writeBarRow := func(label string, duration time.Duration) {
-		pct := int(float64(duration.Milliseconds()) * 100 / float64(totalMs))
-		fmt.Fprintf(&s, "  %s%s (~%2d%%)  %s\n",
-			labelStyle.Render(fmt.Sprintf("%-18s", label)),
-			valueStyle.Render(fmt.Sprintf("~%-6s", formatDuration(duration))),
-			pct, m.summaryBar.ViewAs(float64(duration.Milliseconds())/float64(totalMs)))
-	}
-
-	s.WriteString(headerStyle.Render("Pass 1: Audio Analysis"))
-	s.WriteString("\n")
-
-	if m.audioProfile != nil {
-		writeRow("Duration:", fmt.Sprintf("%.1fs", m.audioProfile.Duration.Seconds()))
-		writeRow("Peak Level:", fmt.Sprintf("%.1f dB", m.audioProfile.PeakLevel))
-		writeRow("RMS Level:", fmt.Sprintf("%.1f dB", m.audioProfile.RMSLevel))
-		writeRow("Dynamic Range:", fmt.Sprintf("%.1f dB", m.audioProfile.DynamicRange))
-		writeRow("Optimal Scale:", fmt.Sprintf("%.3f", m.audioProfile.OptimalScale))
-		fmt.Fprintf(&s, "  %s%s\n", labelStyle.Render(fmt.Sprintf("%-18s", "Analysis Time:")), highlightValueStyle.Render(formatDuration(m.audioProfile.AnalysisTime)))
-	}
-
-	s.WriteString("\n")
-
-	// Pass 2 Performance Breakdown
-	s.WriteString(headerStyle.Render("Pass 2: Rendering & Encoding"))
-	s.WriteString("\n")
-
-	if m.complete.ThumbnailTime > 0 {
-		writeBarRow("Thumbnail:", m.complete.ThumbnailTime)
-	}
-
-	writeBarRow("Visualisation:", m.complete.VisTime)
-	writeBarRow("Video encoding:", m.complete.EncodeTime)
-
-	if m.complete.AudioTime > 0 {
-		writeBarRow("Audio encoding:", m.complete.AudioTime)
-	}
-
-	// Calculate unaccounted time including finalisation (Pass 2 only)
-	// Roll finalisation into runtime/pipeline since it's typically small
-	accountedTime := m.complete.ThumbnailTime + m.complete.VisTime +
-		m.complete.EncodeTime + m.complete.AudioTime
-	otherTime := m.complete.TotalTime - accountedTime
-	if otherTime > 0 {
-		// Label based on encoder type: hardware encoders have GPU pipeline overhead,
-		// software encoder has Go runtime/GC overhead
-		otherLabel := "Runtime:"
-		if m.complete.EncoderIsHW {
-			otherLabel = "GPU pipeline:"
-		}
-		writeBarRow(otherLabel, otherTime)
-	}
-
-	fmt.Fprintf(&s, "  %s%s", labelStyle.Render(fmt.Sprintf("%-18s", "Total time:")), highlightValueStyle.Render(formatDuration(m.complete.TotalTime)))
-
-	return lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(theme.FireOrange).
-		Padding(1, 1).
-		Render(s.String()) + "\n"
-}
-
 // Helper functions
 
 func formatDuration(d time.Duration) string {
@@ -636,114 +639,4 @@ func formatBytes(bytes int64) string {
 
 	units := []string{"KB", "MB", "GB"}
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
-}
-
-// renderSpectrum creates a fire-coloured ASCII visualisation of bar heights.
-// Renders two rows tall so each bar shows finer height resolution.
-func renderSpectrum(barHeights []float64, width int) string {
-	if len(barHeights) == 0 || width == 0 {
-		return ""
-	}
-
-	blocks := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-
-	// Eight-step gradient expanded from the four base theme colours (FireCrimson,
-	// FireRed, FireOrange, FireYellow). The intermediate stops give the spectrum
-	// finer colour fidelity than the four base colours alone.
-	fireColors := []color.Color{
-		lipgloss.Color("#8B0000"), // Dark red (ember)
-		lipgloss.Color("#B22222"), // Firebrick
-		lipgloss.Color("#DC143C"), // Crimson
-		lipgloss.Color("#FF4500"), // Orange-red
-		lipgloss.Color("#FF6347"), // Tomato
-		lipgloss.Color("#FF8C00"), // Dark orange
-		lipgloss.Color("#FFA500"), // Orange
-		lipgloss.Color("#FFD700"), // Gold/Yellow
-	}
-
-	// Sample bars to fit width
-	stride := len(barHeights) / width
-	if stride == 0 {
-		stride = 1
-	}
-
-	// Find max height for normalisation
-	maxHeight := 0.0
-	for _, h := range barHeights {
-		if h > maxHeight {
-			maxHeight = h
-		}
-	}
-
-	if maxHeight == 0 {
-		maxHeight = 1.0 // Avoid division by zero
-	}
-
-	// Collect normalised heights for all bars we'll display
-	displayHeights := make([]float64, 0, width)
-	for i := 0; i < len(barHeights) && len(displayHeights) < width; i += stride {
-		displayHeights = append(displayHeights, barHeights[i]/maxHeight)
-	}
-
-	var result strings.Builder
-
-	// Render top row (upper half of bars, only shows if height > 0.5)
-	for _, normalised := range displayHeights {
-		// Top row: shows the portion above 0.5
-		if normalised > 0.5 {
-			// Map 0.5-1.0 to block index 0-7
-			topPortion := (normalised - 0.5) * 2.0 // 0.0 to 1.0
-			blockIdx := int(topPortion * float64(len(blocks)-1))
-			if blockIdx >= len(blocks) {
-				blockIdx = len(blocks) - 1
-			}
-
-			// Colour based on overall height (hotter = higher)
-			colorIdx := int(normalised * float64(len(fireColors)-1))
-			if colorIdx >= len(fireColors) {
-				colorIdx = len(fireColors) - 1
-			}
-
-			styledBlock := lipgloss.NewStyle().
-				Foreground(fireColors[colorIdx]).
-				Render(string(blocks[blockIdx]))
-			result.WriteString(styledBlock)
-		} else {
-			// Empty space for bars that don't reach this row
-			result.WriteString(" ")
-		}
-	}
-
-	result.WriteString("\n")
-
-	// Render bottom row (lower half of bars)
-	for _, normalised := range displayHeights {
-		var blockIdx int
-		if normalised >= 0.5 {
-			// Full block for bottom row if bar extends to top row
-			blockIdx = len(blocks) - 1
-		} else {
-			// Map 0.0-0.5 to block index 0-7
-			blockIdx = int(normalised * 2.0 * float64(len(blocks)-1))
-			if blockIdx >= len(blocks) {
-				blockIdx = len(blocks) - 1
-			}
-		}
-
-		// Colour based on overall height
-		colorIdx := int(normalised * float64(len(fireColors)-1))
-		if colorIdx >= len(fireColors) {
-			colorIdx = len(fireColors) - 1
-		}
-		if colorIdx < 0 {
-			colorIdx = 0
-		}
-
-		styledBlock := lipgloss.NewStyle().
-			Foreground(fireColors[colorIdx]). //nolint:gosec // bounds checked above
-			Render(string(blocks[blockIdx]))
-		result.WriteString(styledBlock)
-	}
-
-	return result.String()
 }
