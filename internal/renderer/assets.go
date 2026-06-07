@@ -21,20 +21,19 @@ import (
 //go:embed assets/Poppins-Bold.ttf
 var embeddedAssets embed.FS
 
-// loadImageData reads image bytes from the filesystem if customPath is set,
-// otherwise from the embedded assets using assetPath.
-func loadImageData(customPath string, assetPath string) ([]byte, error) {
-	if customPath != "" {
-		return os.ReadFile(customPath)
+// loadImageData reads image bytes from the filesystem when isCustom is true,
+// otherwise from the embedded assets. In both cases path is the already-resolved
+// location from RuntimeConfig.Get*ImagePath.
+func loadImageData(path string, isCustom bool) ([]byte, error) {
+	if isCustom {
+		return os.ReadFile(path)
 	}
-	return embeddedAssets.ReadFile(assetPath)
+	return embeddedAssets.ReadFile(path)
 }
 
 // LoadBackgroundImage loads and scales the background image (from custom path or embedded asset)
 func LoadBackgroundImage(runtimeConfig *config.RuntimeConfig) (*image.RGBA, error) {
-	imagePath := runtimeConfig.GetBackgroundImagePath()
-
-	data, err := loadImageData(runtimeConfig.BackgroundImagePath, imagePath)
+	data, err := loadImageData(runtimeConfig.GetBackgroundImagePath())
 	if err != nil {
 		return nil, err
 	}

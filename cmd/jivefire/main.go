@@ -114,10 +114,10 @@ func main() {
 
 	// If user explicitly requested a specific hardware encoder, verify it's available
 	if hwAccelType != encoder.HWAccelAuto && hwAccelType != encoder.HWAccelNone {
-		selectedEncoder := encoder.SelectBestEncoder(hwAccelType)
+		encoders := encoder.DetectHWEncoders()
+		selectedEncoder := encoder.SelectBestEncoderFrom(encoders, hwAccelType)
 		if selectedEncoder == nil {
 			// Requested encoder not available - list what IS available
-			encoders := encoder.DetectHWEncoders()
 			var available []string
 			for _, enc := range encoders {
 				if enc.Available {
@@ -303,6 +303,17 @@ type pass2Config struct {
 	overallStartTime  time.Time
 }
 
+// expandMonoToStereo writes n mono samples from src into dst as interleaved
+// L,R pairs (each mono sample duplicated to both channels). dst must hold at
+// least 2*n elements.
+func expandMonoToStereo(dst []float32, src []float64, n int) {
+	for i := range n {
+		s := float32(src[i])
+		dst[i*2] = s
+		dst[i*2+1] = s
+	}
+}
+
 func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	// Open streaming reader for Pass 2
 	reader, err := audio.NewStreamingReader(cfg.inputFile)
@@ -440,11 +451,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	initialCount := min(samplesPerFrame, n)
 	var initialErr error
 	if stereo {
-		for i := range initialCount {
-			s := float32(fftBuffer[i])
-			stereoSamples[i*2] = s
-			stereoSamples[i*2+1] = s
-		}
+		expandMonoToStereo(stereoSamples, fftBuffer, initialCount)
 		initialErr = enc.WriteAudioSamples(stereoSamples[:initialCount*2])
 	} else {
 		for i := range initialCount {
@@ -617,11 +624,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		// mono signal is duplicated into both interleaved channels.
 		var writeErr error
 		if stereo {
-			for i := range nRead {
-				s := float32(newSamples[i])
-				stereoSamples[i*2] = s
-				stereoSamples[i*2+1] = s
-			}
+			expandMonoToStereo(stereoSamples, newSamples, nRead)
 			writeErr = enc.WriteAudioSamples(stereoSamples[:nRead*2])
 		} else {
 			for i := range nRead {

@@ -70,9 +70,7 @@ func GenerateThumbnail(outputPath string, meta PodcastMeta, runtimeConfig *confi
 
 // loadThumbnailBackground loads and scales the thumbnail background (from custom path or embedded asset)
 func loadThumbnailBackground(runtimeConfig *config.RuntimeConfig) (*image.RGBA, error) {
-	imagePath := runtimeConfig.GetThumbnailImagePath()
-
-	data, err := loadImageData(runtimeConfig.ThumbnailImagePath, imagePath)
+	data, err := loadImageData(runtimeConfig.GetThumbnailImagePath())
 	if err != nil {
 		return nil, err
 	}

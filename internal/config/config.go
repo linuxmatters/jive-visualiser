@@ -111,20 +111,22 @@ func (c *RuntimeConfig) GetTextColor() (r, g, b uint8) {
 	return TextColorR, TextColorG, TextColorB
 }
 
-// GetBackgroundImagePath returns the background image path (uses override or default embedded asset)
-func (c *RuntimeConfig) GetBackgroundImagePath() string {
+// GetBackgroundImagePath returns the background image path and whether it is a
+// custom filesystem path (true) or the default embedded asset (false).
+func (c *RuntimeConfig) GetBackgroundImagePath() (path string, isCustom bool) {
 	if c.BackgroundImagePath != "" {
-		return c.BackgroundImagePath
+		return c.BackgroundImagePath, true
 	}
-	return BackgroundImageAsset
+	return BackgroundImageAsset, false
 }
 
-// GetThumbnailImagePath returns the thumbnail image path (uses override or default embedded asset)
-func (c *RuntimeConfig) GetThumbnailImagePath() string {
+// GetThumbnailImagePath returns the thumbnail image path and whether it is a
+// custom filesystem path (true) or the default embedded asset (false).
+func (c *RuntimeConfig) GetThumbnailImagePath() (path string, isCustom bool) {
 	if c.ThumbnailImagePath != "" {
-		return c.ThumbnailImagePath
+		return c.ThumbnailImagePath, true
 	}
-	return ThumbnailImageAsset
+	return ThumbnailImageAsset, false
 }
 
 // ParseHexColor parses a hex color string (#RRGGBB or RRGGBB) and returns RGB values

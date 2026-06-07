@@ -826,6 +826,39 @@ func (e *Encoder) receiveAndWriteVideoPackets() error {
 	return nil
 }
 
+// receiveAndWriteAudioPackets receives encoded packets from the audio codec and
+// writes them to the output. Reuses the shared e.pkt packet; safe because the
+// encoder is single-goroutine and the video and audio receive loops never run
+// concurrently. Write errors are propagated, not swallowed.
+func (e *Encoder) receiveAndWriteAudioPackets() error {
+	pkt := e.pkt
+	for {
+		_, err := ffmpeg.AVCodecReceivePacket(e.audioCodec, pkt)
+		if err != nil {
+			// EAGAIN and EOF are expected - means no more packets available
+			if errors.Is(err, ffmpeg.EAgain) || errors.Is(err, ffmpeg.AVErrorEOF) {
+				break
+			}
+			return fmt.Errorf("receive audio packet from encoder: %w", err)
+		}
+
+		// Set stream index and rescale timestamps
+		pkt.SetStreamIndex(e.audioStream.Index())
+		ffmpeg.AVPacketRescaleTs(pkt, e.audioCodec.TimeBase(), e.audioStream.TimeBase())
+
+		// Write packet to output. AVInterleavedWriteFrame consumes the packet's
+		// reference; unref afterwards to reset it for reuse on the next iteration.
+		ret, err := ffmpeg.AVInterleavedWriteFrame(e.formatCtx, pkt)
+		ffmpeg.AVPacketUnref(pkt)
+
+		if err := checkFFmpeg(ret, err, "write audio packet"); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // WriteAudioSamples writes pre-decoded audio samples to the encoder.
 // Samples should be float32, mono or stereo interleaved depending on AudioChannels config.
 // For mono: just the samples. For stereo: L0, R0, L1, R1, ...
@@ -875,29 +908,9 @@ func (e *Encoder) WriteAudioSamples(samples []float32) error {
 			return err
 		}
 
-		// Receive encoded packets
-		for {
-			encodedPkt := ffmpeg.AVPacketAlloc()
-			_, err = ffmpeg.AVCodecReceivePacket(e.audioCodec, encodedPkt)
-			if err != nil {
-				ffmpeg.AVPacketFree(&encodedPkt)
-				// EAGAIN and EOF are expected - means no more packets available
-				if errors.Is(err, ffmpeg.EAgain) || errors.Is(err, ffmpeg.AVErrorEOF) {
-					break
-				}
-				return fmt.Errorf("receive audio packet from encoder: %w", err)
-			}
-
-			// Set stream index and timestamps
-			encodedPkt.SetStreamIndex(e.audioStream.Index())
-			ffmpeg.AVPacketRescaleTs(encodedPkt, e.audioCodec.TimeBase(), e.audioStream.TimeBase())
-
-			// Write packet to output
-			ret, err = ffmpeg.AVInterleavedWriteFrame(e.formatCtx, encodedPkt)
-			ffmpeg.AVPacketFree(&encodedPkt)
-			if err := checkFFmpeg(ret, err, "write audio packet"); err != nil {
-				return err
-			}
+		// Receive and write encoded packets
+		if err := e.receiveAndWriteAudioPackets(); err != nil {
+			return err
 		}
 	}
 
@@ -950,23 +963,8 @@ func (e *Encoder) FlushAudioEncoder() error {
 	// Flush encoder by sending NULL frame
 	_, _ = ffmpeg.AVCodecSendFrame(e.audioCodec, nil)
 
-	// Receive all remaining packets
-	for {
-		encodedPkt := ffmpeg.AVPacketAlloc()
-		_, err := ffmpeg.AVCodecReceivePacket(e.audioCodec, encodedPkt)
-		if err != nil {
-			ffmpeg.AVPacketFree(&encodedPkt)
-			break
-		}
-
-		encodedPkt.SetStreamIndex(e.audioStream.Index())
-		ffmpeg.AVPacketRescaleTs(encodedPkt, e.audioCodec.TimeBase(), e.audioStream.TimeBase())
-
-		_, _ = ffmpeg.AVInterleavedWriteFrame(e.formatCtx, encodedPkt)
-		ffmpeg.AVPacketFree(&encodedPkt)
-	}
-
-	return nil
+	// Receive and write all remaining packets
+	return e.receiveAndWriteAudioPackets()
 }
 
 // writeMonoFloats writes mono float samples to an encoder frame

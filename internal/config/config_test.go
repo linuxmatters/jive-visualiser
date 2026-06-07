@@ -469,15 +469,15 @@ func TestRuntimeConfig_NilFields(t *testing.T) {
 				}
 
 				// GetBackgroundImagePath should return default asset
-				path := c.GetBackgroundImagePath()
-				if path != BackgroundImageAsset {
-					t.Errorf("GetBackgroundImagePath() = %q, want %q", path, BackgroundImageAsset)
+				path, isCustom := c.GetBackgroundImagePath()
+				if path != BackgroundImageAsset || isCustom {
+					t.Errorf("GetBackgroundImagePath() = (%q, %t), want (%q, false)", path, isCustom, BackgroundImageAsset)
 				}
 
 				// GetThumbnailImagePath should return default asset
-				path = c.GetThumbnailImagePath()
-				if path != ThumbnailImageAsset {
-					t.Errorf("GetThumbnailImagePath() = %q, want %q", path, ThumbnailImageAsset)
+				path, isCustom = c.GetThumbnailImagePath()
+				if path != ThumbnailImageAsset || isCustom {
+					t.Errorf("GetThumbnailImagePath() = (%q, %t), want (%q, false)", path, isCustom, ThumbnailImageAsset)
 				}
 			},
 		},
@@ -519,14 +519,14 @@ func TestRuntimeConfig_NilFields(t *testing.T) {
 			},
 			validate: func(t *testing.T, c *RuntimeConfig) {
 				// Empty strings should trigger defaults
-				bgPath := c.GetBackgroundImagePath()
-				if bgPath != BackgroundImageAsset {
-					t.Errorf("Empty background path = %q, want %q", bgPath, BackgroundImageAsset)
+				bgPath, bgCustom := c.GetBackgroundImagePath()
+				if bgPath != BackgroundImageAsset || bgCustom {
+					t.Errorf("Empty background path = (%q, %t), want (%q, false)", bgPath, bgCustom, BackgroundImageAsset)
 				}
 
-				thumbPath := c.GetThumbnailImagePath()
-				if thumbPath != ThumbnailImageAsset {
-					t.Errorf("Empty thumbnail path = %q, want %q", thumbPath, ThumbnailImageAsset)
+				thumbPath, thumbCustom := c.GetThumbnailImagePath()
+				if thumbPath != ThumbnailImageAsset || thumbCustom {
+					t.Errorf("Empty thumbnail path = (%q, %t), want (%q, false)", thumbPath, thumbCustom, ThumbnailImageAsset)
 				}
 			},
 		},
@@ -552,15 +552,15 @@ func TestRuntimeConfig_NilFields(t *testing.T) {
 				}
 
 				// GetBackgroundImagePath should return override
-				path := c.GetBackgroundImagePath()
-				if path != "/custom/bg.png" {
-					t.Errorf("GetBackgroundImagePath() = %q, want /custom/bg.png", path)
+				path, isCustom := c.GetBackgroundImagePath()
+				if path != "/custom/bg.png" || !isCustom {
+					t.Errorf("GetBackgroundImagePath() = (%q, %t), want (/custom/bg.png, true)", path, isCustom)
 				}
 
 				// GetThumbnailImagePath should return override
-				path = c.GetThumbnailImagePath()
-				if path != "/custom/thumb.png" {
-					t.Errorf("GetThumbnailImagePath() = %q, want /custom/thumb.png", path)
+				path, isCustom = c.GetThumbnailImagePath()
+				if path != "/custom/thumb.png" || !isCustom {
+					t.Errorf("GetThumbnailImagePath() = (%q, %t), want (/custom/thumb.png, true)", path, isCustom)
 				}
 			},
 		},

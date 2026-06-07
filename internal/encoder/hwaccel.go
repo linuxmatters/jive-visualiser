@@ -236,7 +236,16 @@ func SelectBestEncoder(requestedType HWAccelType) *HWEncoder {
 	}
 
 	// Detect all available encoders in priority order
-	encoders := DetectHWEncoders()
+	return SelectBestEncoderFrom(DetectHWEncoders(), requestedType)
+}
+
+// SelectBestEncoderFrom selects the best encoder from an already-probed list,
+// avoiding a redundant hardware probe when the caller already has the result of
+// DetectHWEncoders. Selection semantics match SelectBestEncoder.
+func SelectBestEncoderFrom(encoders []HWEncoder, requestedType HWAccelType) *HWEncoder {
+	if requestedType == HWAccelNone {
+		return nil // Explicitly requested software encoding
+	}
 
 	if requestedType == HWAccelAuto {
 		// Return first available encoder from the priority list
