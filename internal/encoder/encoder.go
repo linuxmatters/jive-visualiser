@@ -950,7 +950,7 @@ func writeMonoFloats(frame *ffmpeg.AVFrame, samples []float32) error {
 	}
 
 	// Convert to byte slice for writing
-	data := (*[1 << 30]byte)(dataPtr)[: nbSamples*4 : nbSamples*4]
+	data := unsafe.Slice((*byte)(dataPtr), nbSamples*4)
 
 	// Write samples to channel
 	for i := range nbSamples {
@@ -975,8 +975,8 @@ func writeStereoFloats(frame *ffmpeg.AVFrame, samples []float32) error {
 	}
 
 	// Convert to byte slices for writing
-	leftData := (*[1 << 30]byte)(leftPtr)[: nbSamples*4 : nbSamples*4]
-	rightData := (*[1 << 30]byte)(rightPtr)[: nbSamples*4 : nbSamples*4]
+	leftData := unsafe.Slice((*byte)(leftPtr), nbSamples*4)
+	rightData := unsafe.Slice((*byte)(rightPtr), nbSamples*4)
 
 	// Write samples to both channels
 	for i := range nbSamples {

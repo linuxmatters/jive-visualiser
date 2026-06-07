@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -27,15 +28,7 @@ func sparkline(samples []float64) string {
 		return ""
 	}
 
-	minV, maxV := samples[0], samples[0]
-	for _, v := range samples {
-		if v < minV {
-			minV = v
-		}
-		if v > maxV {
-			maxV = v
-		}
-	}
+	minV, maxV := slices.Min(samples), slices.Max(samples)
 
 	span := maxV - minV
 	var b strings.Builder
