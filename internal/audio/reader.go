@@ -235,11 +235,6 @@ func (d *StreamingReader) flushDecoder() error {
 	return nil
 }
 
-// unsafeByteSlice reinterprets a pointer as a byte slice of the given length.
-func unsafeByteSlice(ptr unsafe.Pointer, length int) []byte {
-	return (*[1 << 30]byte)(ptr)[:length:length]
-}
-
 // decodeS16 decodes a signed 16-bit little-endian sample at byte offset i,
 // normalised to [-1.0, 1.0].
 func decodeS16(buf []byte, i int) float64 {
@@ -305,8 +300,8 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 		if leftPtr == nil || rightPtr == nil {
 			return nil, fmt.Errorf("missing channel data")
 		}
-		leftBuf := unsafeByteSlice(leftPtr, nbSamples*bps)
-		rightBuf := unsafeByteSlice(rightPtr, nbSamples*bps)
+		leftBuf := unsafe.Slice((*byte)(leftPtr), nbSamples*bps)
+		rightBuf := unsafe.Slice((*byte)(rightPtr), nbSamples*bps)
 		for i := range nbSamples {
 			samples[i] = (decode(leftBuf, i*bps) + decode(rightBuf, i*bps)) / 2
 		}
@@ -316,7 +311,7 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 		if dataPtr == nil {
 			return nil, fmt.Errorf("no data in frame")
 		}
-		buf := unsafeByteSlice(dataPtr, nbSamples*bps)
+		buf := unsafe.Slice((*byte)(dataPtr), nbSamples*bps)
 		for i := range nbSamples {
 			samples[i] = decode(buf, i*bps)
 		}
@@ -328,7 +323,7 @@ func (d *StreamingReader) extractSamples() ([]float64, error) {
 			return nil, fmt.Errorf("no data in frame")
 		}
 		stride := bps * channels
-		buf := unsafeByteSlice(dataPtr, nbSamples*stride)
+		buf := unsafe.Slice((*byte)(dataPtr), nbSamples*stride)
 		if channels == 1 {
 			for i := range nbSamples {
 				samples[i] = decode(buf, i*stride)

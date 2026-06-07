@@ -2,6 +2,7 @@ package ui
 
 import (
 	"math"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -68,12 +69,7 @@ func renderSpectrum(barHeights []float64, width int) string {
 
 	// Normalise to the loudest current bar so the spectrum fills both rows each
 	// frame (per-frame auto-scaling, as the original did).
-	maxHeight := 0.0
-	for _, h := range barHeights {
-		if h > maxHeight {
-			maxHeight = h
-		}
-	}
+	maxHeight := slices.Max(barHeights)
 	if maxHeight == 0 {
 		maxHeight = 1.0 // Avoid division by zero
 	}
