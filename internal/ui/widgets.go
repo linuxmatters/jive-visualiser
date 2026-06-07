@@ -48,7 +48,7 @@ func sparkline(samples []float64) string {
 		} else {
 			norm = 0.5
 		}
-		b.WriteRune(sparklineBlocks[blockClamp(norm)])
+		b.WriteRune(sparklineBlocks[blockClamp(norm, len(sparklineBlocks))])
 	}
 	return b.String()
 }

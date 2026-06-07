@@ -127,20 +127,20 @@ func rowGlyph(kind rowKind, normalised float64) (glyph rune, colorIdx int, drawn
 			return ' ', 0, false
 		}
 		topPortion := (normalised - 0.5) * 2.0 // 0.0 to 1.0
-		return spectrumBlocks[blockClamp(topPortion)], colorClamp(normalised, len(theme.FireSpectrum)), true
+		return spectrumBlocks[blockClamp(topPortion, len(spectrumBlocks))], colorClamp(normalised, len(theme.FireSpectrum)), true
 	default: // bottomRow
 		if normalised >= 0.5 {
 			return spectrumBlocks[len(spectrumBlocks)-1], colorClamp(normalised, len(theme.FireSpectrum)), true
 		}
-		return spectrumBlocks[blockClamp(normalised*2.0)], colorClamp(normalised, len(theme.FireSpectrum)), true
+		return spectrumBlocks[blockClamp(normalised*2.0, len(spectrumBlocks))], colorClamp(normalised, len(theme.FireSpectrum)), true
 	}
 }
 
-// blockClamp maps a 0.0-1.0 portion to a valid spectrumBlocks index.
-func blockClamp(portion float64) int {
-	idx := int(portion * float64(len(spectrumBlocks)-1))
-	if idx >= len(spectrumBlocks) {
-		idx = len(spectrumBlocks) - 1
+// blockClamp maps a 0.0-1.0 portion to a valid index in an n-length block array.
+func blockClamp(portion float64, n int) int {
+	idx := int(portion * float64(n-1))
+	if idx >= n {
+		idx = n - 1
 	}
 	if idx < 0 {
 		idx = 0
