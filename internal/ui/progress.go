@@ -172,21 +172,25 @@ type Model struct {
 	quitting        bool
 }
 
+// newProgressBar builds a fire-gradient progress bar of the given width with the
+// percentage label suppressed. Shared by NewModel and the analysis→rendering
+// transition so a fresh bar is constructed consistently.
+func newProgressBar(width int) progress.Model {
+	// Fire gradient: deep red → orange → yellow
+	return progress.New(
+		progress.WithColors(theme.FireCrimson, theme.FireYellow),
+		progress.WithWidth(width),
+		progress.WithoutPercentage(),
+	)
+}
+
 // NewModel creates a new unified progress UI model
 func NewModel(noPreview bool) *Model {
-	// Fire gradient: deep red → orange → yellow
-	p := progress.New(
-		progress.WithColors(theme.FireCrimson, theme.FireYellow),
-		progress.WithWidth(40),
-		progress.WithoutPercentage(),
-	)
+	// Main 40-wide bar for pass progress.
+	p := newProgressBar(40)
 
 	// Smaller progress bar for summary performance charts
-	summaryBar := progress.New(
-		progress.WithColors(theme.FireCrimson, theme.FireYellow),
-		progress.WithWidth(30),
-		progress.WithoutPercentage(),
-	)
+	summaryBar := newProgressBar(30)
 
 	// Help footer styled to the fire palette: the key in FireOrange, the
 	// description in WarmGray.
@@ -263,7 +267,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			OptimalScale: msg.OptimalScale,
 			AnalysisTime: msg.AnalysisTime,
 		}
-		// Transition to rendering phase
+		// Transition to rendering phase. Recreate the progress bar from scratch so
+		// Pass 2 starts from an empty fill: the shared bar still targets Pass 1's
+		// ~100%, and SetPercent would animate it DOWN to the first small Pass 2
+		// percent. An instant recreate resets the target to 0 with no drain, while
+		// keeping the animated View() fill for Pass 2. Width was set on
+		// WindowSizeMsg, so preserve it across the recreate.
+		m.progressBar = newProgressBar(m.progressBar.Width())
 		m.phase = PhaseRendering
 		m.pass2StartTime = time.Now()
 		return m, nil

@@ -189,6 +189,42 @@ func TestUpdatePhaseTransitions(t *testing.T) {
 	}
 }
 
+// TestAnalysisCompleteResetsProgressBar guards against the shared progress bar
+// carrying Pass 1's fill into Pass 2. Pass 1 drives the bar near full; the
+// AnalysisComplete transition must recreate the bar so its target returns to 0,
+// otherwise the first Pass 2 SetPercent would visibly animate the fill DOWN from
+// ~100% rather than up from empty.
+func TestAnalysisCompleteResetsProgressBar(t *testing.T) {
+	m := NewModel(true)
+	// Set a non-default width so the reset is verified to preserve it.
+	m.progressBar.SetWidth(37)
+
+	// Pass 1 nearly complete: the bar's target climbs toward 1.0.
+	m.Update(AnalysisProgress{Frame: 99, TotalFrames: 100})
+	if got := m.progressBar.Percent(); got < 0.98 {
+		t.Fatalf("setup: progress bar target = %v, want near 1.0", got)
+	}
+
+	next, cmd := m.Update(AnalysisComplete{
+		PeakMagnitude: 1.0,
+		RMSLevel:      0.5,
+		DynamicRange:  2.0,
+		Duration:      60 * time.Second,
+		OptimalScale:  1.0,
+		AnalysisTime:  time.Second,
+	})
+	got := asModel(t, next)
+
+	// Instant recreate: no animation cmd, target reset to 0.
+	assertCmdNil(t, cmd)
+	if p := got.progressBar.Percent(); p != 0 {
+		t.Errorf("progress bar target after transition = %v, want 0 (stale Pass 1 fill not cleared)", p)
+	}
+	if w := got.progressBar.Width(); w != 37 {
+		t.Errorf("progress bar width after transition = %d, want 37 (width not preserved)", w)
+	}
+}
+
 func TestUpdateRenderComplete(t *testing.T) {
 	m := NewModel(true)
 	// Zero the delay so the scheduled tea.Tick fires immediately when invoked,
