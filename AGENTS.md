@@ -37,7 +37,7 @@
 ## Charm TUI (v2)
 
 - Use the Charm v2 suite: import paths are `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `charm.land/bubbles/v2` — NOT `github.com/charmbracelet/...`. Package names are unchanged (`tea`, `lipgloss`, `progress`)
-- `harmonica` has no v2; stays at `github.com/charmbracelet/harmonica` (indirect)
+- `harmonica` has no v2; stays at `github.com/charmbracelet/harmonica` (direct dependency)
 - v2 API gotchas vs v1:
   - `Model.View()` returns `tea.View`, not `string`; set `v.AltScreen = true` instead of `tea.WithAltScreen()`
   - Key messages are `tea.KeyPressMsg`, not `tea.KeyMsg`
@@ -48,7 +48,7 @@
 
 - FFT size: 2048 samples (Hanning window)
 - 64 frequency bars with log-scale binning
-- CAVA-style smooth decay: `NoiseReduction=0.77`, `FallAccel=0.028`
+- Harmonica spring peak-hold bar dynamics: each bar rises instantly to any new peak, then springs back toward the live level. Spring params: frequency `6.0`, damping `1.0`, delta `1/FPS`, gain `2.0` (replaces the amplitude lift the old CAVA integrator provided)
 - Audio frame size mismatch handled by `AudioFIFO` (FFT needs 2048, AAC expects 1024)
 
 ## Performance Patterns

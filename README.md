@@ -1,6 +1,6 @@
 # Jivefire 🔥
 
-> Spin your podcast .wav into a groovy MP4 visualiser with [Cava](https://github.com/karlstav/cava)-inspired real-time audio frequencies.
+> Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies.
 
 ## The Groove
 
@@ -15,7 +15,7 @@ Your podcast audio deserves more than a static image on YouTube. Jivefire transf
   - 🎚️ **64 frequency bars** that actually look discrete (not that smeared spectrum nonsense)
   - 🪞 **Symmetric mirroring** above and below centre, doubles the visual impact
   - 🔬 **FFT-based analysis** 2048-point Hanning window, log scale frequency binning
-  - ✨ **Smooth decay animation** à la CAVA-bars rise fast, fall gracefully
+  - ✨ **Spring-driven bar dynamics** bars snap up instantly, spring back down via harmonica peak-hold
 - 🚀 **Stupidly fast** streaming pipeline, parallel RGB→YUV conversion
   - ⚡ **GPU acceleration** auto-detected: NVENC, Vulkan, VA-API, QuickSync, VideoToolbox
 - 📦 **Single binary** No Python. No FFmpeg install required. Just drop and render

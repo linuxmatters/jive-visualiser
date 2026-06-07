@@ -37,7 +37,6 @@ var CLI struct {
 	BackgroundImage string `help:"Path to custom background image (PNG, 1280x720)"`
 	ThumbnailImage  string `help:"Path to custom thumbnail image (PNG, 1280x720)"`
 	NoPreview       bool   `help:"Disable video preview during encoding"`
-	HarmonicaCaps   bool   `help:"Use opt-in harmonica spring peak-hold bar dynamics instead of the default CAVA smoother"`
 	Encoder         string `help:"Video encoder: auto, nvenc, qsv, vaapi, vulkan, software" default:"auto"`
 	Version         bool   `help:"Show version information"`
 	Probe           bool   `help:"Probe and display available hardware encoders"`
@@ -181,15 +180,14 @@ func main() {
 	outputFile := CLI.Output
 	channels := CLI.Channels
 	noPreview := CLI.NoPreview
-	harmonicaCaps := CLI.HarmonicaCaps
 
 	meta := renderer.PodcastMeta{Title: CLI.Title, Episode: CLI.Episode}
 
 	// Generate video using 2-pass streaming approach
-	generateVideo(inputFile, outputFile, channels, noPreview, harmonicaCaps, hwAccelType, runtimeConfig, meta)
+	generateVideo(inputFile, outputFile, channels, noPreview, hwAccelType, runtimeConfig, meta)
 }
 
-func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, harmonicaCaps bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, meta renderer.PodcastMeta) {
+func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, meta renderer.PodcastMeta) {
 	// Track overall timing from the very start
 	overallStartTime := time.Now()
 
@@ -262,7 +260,6 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 			outputFile:        outputFile,
 			channels:          channels,
 			noPreview:         noPreview,
-			harmonicaCaps:     harmonicaCaps,
 			hwAccel:           hwAccel,
 			runtimeConfig:     runtimeConfig,
 			meta:              meta,
@@ -299,7 +296,6 @@ type pass2Config struct {
 	outputFile        string
 	channels          int
 	noPreview         bool
-	harmonicaCaps     bool
 	hwAccel           encoder.HWAccelType
 	runtimeConfig     *config.RuntimeConfig
 	meta              renderer.PodcastMeta
@@ -376,29 +372,20 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	}
 	audioCodecInfo := fmt.Sprintf("AAC %.1fkHz %s", float64(audioSampleRate)/1000.0, audioChannelStr)
 
-	// CAVA algorithm state
+	// Harmonica spring peak-hold state. Each bar rises INSTANTLY to a new high,
+	// then springs DOWN toward the raw level over subsequent frames. The spring
+	// delta is locked to the video frame interval (1/FPS) so the fall rate is
+	// framerate-independent.
 	prevBarHeights := make([]float64, config.NumBars)
-	cavaPeaks := make([]float64, config.NumBars)
-	cavaFall := make([]float64, config.NumBars)
-	cavaMem := make([]float64, config.NumBars)
-
-	// Opt-in harmonica peak-hold state (--harmonica-caps). Allocated unconditionally
-	// (negligible, off the video hot path) but stepped only when cfg.harmonicaCaps is
-	// set. Each bar peak-holds: it rises INSTANTLY to a new high, then springs DOWN
-	// toward the raw level over subsequent frames. The spring delta is locked to the
-	// video frame interval (1/FPS) so the fall rate is framerate-independent. This is
-	// the in-scope reading of "peak caps": the drawn bar heights carry the harmonica
-	// peak-hold dynamic, producing an MP4 visibly distinct from the CAVA default
-	// without touching internal/renderer or the YUV path.
 	const (
 		harmonicaSpringFreq    = 6.0
 		harmonicaSpringDamping = 1.0
-		// harmonicaGain lifts the spring bars toward the amplitude the CAVA path
-		// gets for free from its leaky integrator (steady-state gain
-		// ~1/(1-NoiseReduction) ≈ 4.3x). The peak-hold path has no integrator, so
-		// bars otherwise peak at the raw scaled height and look short. The existing
-		// soft-knee compression caps the loud bars, so this keeps dynamic spread
-		// rather than flattening everything to full height. Tune for taste.
+		// harmonicaGain lifts the spring bars to a fuller amplitude. The peak-hold
+		// path has no integrator, so bars otherwise peak at the raw scaled height
+		// and look short (the old leaky-integrator path had a steady-state gain of
+		// roughly 4.3x for free). The existing soft-knee compression caps the loud
+		// bars, so this keeps dynamic spread rather than flattening everything to
+		// full height. Tune for taste.
 		harmonicaGain = 2.0
 	)
 	harmonicaDelta := 1.0 / config.Framerate
@@ -414,14 +401,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	rearrangedHeights := make([]float64, config.NumBars)
 	barHeightsCopy := make([]float64, config.NumBars) // For UI updates
 
-	// Calculate gravity modifier (CAVA formula)
-	// Scales bar fall speed based on framerate deviation from CAVA's reference 60fps
-	gravityMod := math.Pow(config.GravityFramerateRef/config.Framerate, config.GravityExponent) * config.GravityBase / config.NoiseReduction
-	if gravityMod < config.GravityMin {
-		gravityMod = config.GravityMin
-	}
-
-	// Auto-sensitivity adjustment (CAVA-style)
+	// Auto-sensitivity adjustment
 	sensitivity := 1.0
 
 	// Sliding buffer for FFT: we read samplesPerFrame but need FFTSize for FFT
@@ -472,7 +452,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		// Compute magnitudes and bin into bars using optimal baseScale from Pass 1
 		audio.BinFFT(coeffs, sensitivity, profile.OptimalBaseScale, barHeights)
 
-		// CAVA-style auto-sensitivity with soft knee compression
+		// Auto-sensitivity with soft knee compression
 		overshootDetected := false
 
 		for i, h := range barHeights {
@@ -506,71 +486,37 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 			barHeights[i] *= availableHeight
 		}
 
-		if cfg.harmonicaCaps {
-			// Opt-in harmonica peak-hold dynamic (--harmonica-caps). Each bar rises
-			// instantly to a new peak, then springs down toward the raw level. Writes
-			// into prevBarHeights so the downstream rearrange/draw pipeline is shared
-			// with the CAVA path. The CAVA state arrays above are left untouched.
-			for i := range barHeights {
-				// Apply the spring-path gain so bars reach a CAVA-like amplitude; the
-				// soft-knee below caps the loud ones, preserving dynamic spread.
-				currentHeight := barHeights[i] * harmonicaGain
+		// Harmonica peak-hold dynamic. Each bar rises instantly to a new peak, then
+		// springs down toward the raw level. Writes into prevBarHeights so the
+		// downstream rearrange/draw pipeline stays unchanged.
+		for i := range barHeights {
+			// Apply the spring-path gain so bars reach a fuller amplitude; the
+			// soft-knee below caps the loud ones, preserving dynamic spread.
+			currentHeight := barHeights[i] * harmonicaGain
 
-				if currentHeight >= harmonicaPos[i] {
-					// Instant rise to the new peak; reset velocity so the fall starts
-					// from rest.
-					harmonicaPos[i] = currentHeight
+			if currentHeight >= harmonicaPos[i] {
+				// Instant rise to the new peak; reset velocity so the fall starts
+				// from rest.
+				harmonicaPos[i] = currentHeight
+				harmonicaVel[i] = 0
+			} else {
+				harmonicaPos[i], harmonicaVel[i] = harmonicaSprings[i].Update(
+					harmonicaPos[i], harmonicaVel[i], currentHeight)
+				if harmonicaPos[i] < 0 {
+					harmonicaPos[i] = 0
 					harmonicaVel[i] = 0
-				} else {
-					harmonicaPos[i], harmonicaVel[i] = harmonicaSprings[i].Update(
-						harmonicaPos[i], harmonicaVel[i], currentHeight)
-					if harmonicaPos[i] < 0 {
-						harmonicaPos[i] = 0
-						harmonicaVel[i] = 0
-					}
 				}
-
-				heldHeight := harmonicaPos[i]
-
-				// Soft knee compression (same clamp as the CAVA path)
-				if heldHeight > availableHeight {
-					overshoot := heldHeight - availableHeight
-					heldHeight = availableHeight + overshoot*math.Exp(-overshoot/availableHeight)
-				}
-
-				prevBarHeights[i] = heldHeight
 			}
-		} else {
-			// Apply CAVA-style gravity smoothing
-			for i := range barHeights {
-				currentHeight := barHeights[i]
 
-				if currentHeight < prevBarHeights[i] {
-					// Falling: apply gravity with quadratic acceleration
-					currentHeight = cavaPeaks[i] * (1.0 - (cavaFall[i] * cavaFall[i] * gravityMod))
-					cavaFall[i] += config.FallAccel
+			heldHeight := harmonicaPos[i]
 
-					if currentHeight < 0 {
-						currentHeight = 0
-					}
-				} else {
-					// Rising: new peak
-					cavaPeaks[i] = currentHeight
-					cavaFall[i] = 0.0
-				}
-
-				// CAVA integral smoothing
-				currentHeight = cavaMem[i]*config.NoiseReduction + currentHeight
-				cavaMem[i] = currentHeight
-
-				// Soft knee compression
-				if currentHeight > availableHeight {
-					overshoot := currentHeight - availableHeight
-					currentHeight = availableHeight + overshoot*math.Exp(-overshoot/availableHeight)
-				}
-
-				prevBarHeights[i] = currentHeight
+			// Soft knee compression
+			if heldHeight > availableHeight {
+				overshoot := heldHeight - availableHeight
+				heldHeight = availableHeight + overshoot*math.Exp(-overshoot/availableHeight)
 			}
+
+			prevBarHeights[i] = heldHeight
 		}
 
 		// Rearrange frequencies for center-out distribution

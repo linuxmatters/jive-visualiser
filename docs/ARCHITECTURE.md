@@ -54,7 +54,7 @@ FFmpeg Decoder (ffmpeg-statigo, streaming)
 FFT Analysis (gonum/fourier)
     ├─ 2048-point Hanning window
     ├─ Log-scale frequency binning → 64 bars
-    └─ Smooth decay animation (CAVA-style)
+    └─ Harmonica spring peak-hold dynamics (bars snap up, spring back down)
     ↓
 Frame Renderer (image/draw + custom optimizations)
     ├─ 64 bars with symmetric vertical mirroring
