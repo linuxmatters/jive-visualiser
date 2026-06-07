@@ -252,12 +252,6 @@ func TestUpdateRenderComplete(t *testing.T) {
 	if got.phase != PhaseComplete {
 		t.Errorf("phase = %d, want PhaseComplete", got.phase)
 	}
-	if !got.quitting {
-		t.Error("quitting = false, want true")
-	}
-	if got.completionTime.IsZero() {
-		t.Error("completionTime not set")
-	}
 
 	// RenderComplete schedules a delayed quit; with the delay zeroed above the
 	// cmd resolves to progressQuitMsg immediately.

@@ -161,19 +161,14 @@ type Model struct {
 	speedHistory []float64
 
 	// Timing
-	overallStartTime time.Time
-	pass1StartTime   time.Time
-	pass2StartTime   time.Time
-	completionTime   time.Time
+	pass2StartTime time.Time
 
 	// UI state
 	width           int
-	height          int
 	noPreview       bool
 	cachedPreview   string
 	cachedFrameNum  int
 	completionDelay time.Duration
-	quitting        bool
 }
 
 // boxDesignWidth is the fixed shared outer width for every bordered box. It is
@@ -279,18 +274,16 @@ func NewModel(noPreview bool) *Model {
 	}
 
 	return &Model{
-		progressBar:      p,
-		summaryBar:       summaryBar,
-		help:             h,
-		spinner:          sp,
-		phase:            PhaseAnalysis,
-		overallStartTime: time.Now(),
-		pass1StartTime:   time.Now(),
-		completionDelay:  2 * time.Second,
-		noPreview:        noPreview,
-		spectrumSprings:  springs,
-		spectrumPos:      make([]float64, config.NumBars),
-		spectrumVel:      make([]float64, config.NumBars),
+		progressBar:     p,
+		summaryBar:      summaryBar,
+		help:            h,
+		spinner:         sp,
+		phase:           PhaseAnalysis,
+		completionDelay: 2 * time.Second,
+		noPreview:       noPreview,
+		spectrumSprings: springs,
+		spectrumPos:     make([]float64, config.NumBars),
+		spectrumVel:     make([]float64, config.NumBars),
 	}
 }
 
@@ -306,7 +299,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.height = msg.Height
 		// Fixed design-width bar: stable regardless of terminal width.
 		m.progressBar.SetWidth(m.progressBarWidth())
 		return m, nil
@@ -357,8 +349,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RenderComplete:
 		m.complete = &msg
 		m.phase = PhaseComplete
-		m.completionTime = time.Now()
-		m.quitting = true
 
 		return m, tea.Tick(m.completionDelay, func(t time.Time) tea.Msg {
 			return progressQuitMsg{}
@@ -772,18 +762,6 @@ func writeFrameLine(s *strings.Builder, frame, codec string, rowWidth int) {
 }
 
 // Helper functions
-
-// maxLineWidth returns the widest rendered line in s, measured in terminal
-// cells. Used to size the spectrum so the spectrum+stats row fits the box.
-func maxLineWidth(s string) int {
-	maxw := 0
-	for line := range strings.SplitSeq(s, "\n") {
-		if w := lipgloss.Width(line); w > maxw {
-			maxw = w
-		}
-	}
-	return maxw
-}
 
 // compactCodec shortens a codec description for the one-line source summary by
 // dropping the resolution/layout suffix: "H.264 1920×1080" → "H.264" and

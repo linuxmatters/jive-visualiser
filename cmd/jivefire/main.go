@@ -425,13 +425,15 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		return
 	}
 
-	// Write initial audio samples to encoder (first samplesPerFrame worth)
-	// This corresponds to the audio for frame 0
-	initialAudioSamples := make([]float32, samplesPerFrame)
-	for i := 0; i < samplesPerFrame && i < n; i++ {
-		initialAudioSamples[i] = float32(fftBuffer[i])
+	// Write initial audio samples to encoder (first samplesPerFrame worth).
+	// This corresponds to the audio for frame 0. Reuse the audioSamples buffer:
+	// WriteAudioSamples copies into the FIFO and retains no reference, and the
+	// buffer is overwritten before each later use in the render loop.
+	initialCount := min(samplesPerFrame, n)
+	for i := range initialCount {
+		audioSamples[i] = float32(fftBuffer[i])
 	}
-	if err := enc.WriteAudioSamples(initialAudioSamples); err != nil {
+	if err := enc.WriteAudioSamples(audioSamples[:initialCount]); err != nil {
 		cli.PrintError(fmt.Sprintf("error writing initial audio: %v", err))
 		p.Quit()
 		return

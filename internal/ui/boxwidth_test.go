@@ -10,6 +10,19 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// maxLineWidth returns the widest rendered line in s, measured in terminal
+// cells. Used by the box-width and widget tests to size the spectrum so the
+// spectrum+stats row fits the box.
+func maxLineWidth(s string) int {
+	maxw := 0
+	for line := range strings.SplitSeq(s, "\n") {
+		if w := lipgloss.Width(line); w > maxw {
+			maxw = w
+		}
+	}
+	return maxw
+}
+
 // boxWidthFixture builds a model populated with enough state that every bordered
 // box renders its full content: an audio profile, a Pass 2 render state with the
 // widest codec strings, primed spectrum springs, a preview frame, and a

@@ -130,10 +130,8 @@ func (f *Frame) Draw(barHeights []float64) {
 	// Draw framing lines around center gap
 	f.drawFramingLines()
 
-	// Apply text overlay
-	if f.fontFace != nil {
-		f.applyTextOverlay()
-	}
+	// Apply text overlay (self-guards on a nil font face)
+	f.applyTextOverlay()
 }
 
 // drawBars renders all bars using horizontal + vertical symmetry optimization.
@@ -148,7 +146,12 @@ func (f *Frame) drawBars(barHeights []float64) {
 	// Pre-allocate pixel pattern buffer (reused for all bars)
 	pixelPattern := make([]byte, config.BarWidth*4)
 
-	// Render only left half (bars 0-31), upward only
+	// Render only the left half (bars 0-31) upward, then mirror each bar in 3
+	// operations to fill the remaining 3/4 of the bars within the same iteration.
+	// The mirrors read only pixels written by renderBar earlier in this iteration
+	// (the left upward bar), so merging the former render/mirror loops keeps output
+	// identical. The clamped barHeight feeds renderBar; the mirrors derive yStart
+	// from the unclamped barHeight, matching the original mirror loop.
 	halfBars := config.NumBars / 2
 	for i := range halfBars {
 		barHeight := int(barHeights[i])
@@ -156,46 +159,27 @@ func (f *Frame) drawBars(barHeights []float64) {
 			continue
 		}
 
-		x := f.startX + i*(config.BarWidth+config.BarGap)
-		if x+config.BarWidth > config.Width {
-			continue
-		}
-
-		// Clamp bar height
-		if barHeight > f.maxBarHeight {
-			barHeight = f.maxBarHeight
-		}
-
-		// Render upward bar only (left half) - always opaque, no background blending needed
-		yStart := f.centerY - barHeight - config.CenterGap/2
-		yEnd := f.centerY - config.CenterGap/2
-
-		f.renderBar(x, yStart, yEnd, barHeight, pixelPattern)
-	}
-
-	// Now mirror in 3 operations to fill remaining 3/4 of the bars:
-	// 1. Vertical mirror: bars 0-31 upward → bars 0-31 downward
-	// 2. Horizontal mirror: bars 0-31 upward → bars 32-63 upward
-	// 3. Both mirrors: bars 0-31 upward → bars 32-63 downward
-	for i := range halfBars {
-		barHeight := int(barHeights[i])
-		if barHeight <= 0 {
-			continue
-		}
-
 		xLeft := f.startX + i*(config.BarWidth+config.BarGap)
-		xRight := f.startX + (config.NumBars-1-i)*(config.BarWidth+config.BarGap)
+		if xLeft+config.BarWidth > config.Width {
+			continue
+		}
 
-		yStart := f.centerY - barHeight - config.CenterGap/2
 		yEnd := f.centerY - config.CenterGap/2
 
-		// 1. Vertical mirror: create left-side downward bars
+		// Render upward bar (left half) with the clamped height - always opaque,
+		// no background blending needed.
+		clampedHeight := min(barHeight, f.maxBarHeight)
+		f.renderBar(xLeft, f.centerY-clampedHeight-config.CenterGap/2, yEnd, clampedHeight, pixelPattern)
+
+		// Mirror using the unclamped barHeight, matching the original mirror loop:
+		// 1. Vertical mirror → left-side downward bar
+		// 2. Horizontal mirror → right-side upward bar
+		// 3. Both mirrors → right-side downward bar
+		xRight := f.startX + (config.NumBars-1-i)*(config.BarWidth+config.BarGap)
+		yStart := f.centerY - barHeight - config.CenterGap/2
+
 		f.mirrorBarVertical(xLeft, yStart, yEnd)
-
-		// 2. Horizontal mirror: create right-side upward bars
 		f.mirrorBarHorizontal(xLeft, xRight, yStart, yEnd)
-
-		// 3. Both mirrors: create right-side downward bars
 		f.mirrorBarVertical(xRight, yStart, yEnd)
 	}
 }
