@@ -92,7 +92,7 @@ func RenderPreview(preview [][]color.RGBA) string {
 	builder.Grow(len(preview) * len(preview[0]) * 20)
 
 	// Top border
-	builder.WriteString("Video Preview:\n┌")
+	builder.WriteString("\n┌")
 	builder.WriteString(strings.Repeat("─", len(preview[0])))
 	builder.WriteString("┐\n")
 

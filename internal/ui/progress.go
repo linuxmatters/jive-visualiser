@@ -648,7 +648,6 @@ func (m *Model) recordSpeedSample(msg RenderProgress) {
 }
 
 func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
-	s.WriteString(lipgloss.NewStyle().Foreground(theme.FireOrange).Render("Live Visualisation:"))
 	s.WriteString("\n")
 
 	// Size the spectrum to the preview box's rendered width so its left edge and
