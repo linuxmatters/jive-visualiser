@@ -196,8 +196,10 @@ func TestUpdatePhaseTransitions(t *testing.T) {
 // ~100% rather than up from empty.
 func TestAnalysisCompleteResetsProgressBar(t *testing.T) {
 	m := NewModel(true)
-	// Set a non-default width so the reset is verified to preserve it.
+	// Force a stale width so the recreate is verified to restore the fixed
+	// design width rather than carry the stale value over.
 	m.progressBar.SetWidth(37)
+	wantWidth := m.progressBarWidth()
 
 	// Pass 1 nearly complete: the bar's target climbs toward 1.0.
 	m.Update(AnalysisProgress{Frame: 99, TotalFrames: 100})
@@ -220,8 +222,8 @@ func TestAnalysisCompleteResetsProgressBar(t *testing.T) {
 	if p := got.progressBar.Percent(); p != 0 {
 		t.Errorf("progress bar target after transition = %v, want 0 (stale Pass 1 fill not cleared)", p)
 	}
-	if w := got.progressBar.Width(); w != 37 {
-		t.Errorf("progress bar width after transition = %d, want 37 (width not preserved)", w)
+	if w := got.progressBar.Width(); w != wantWidth {
+		t.Errorf("progress bar width after transition = %d, want %d (fixed design width not restored)", w, wantWidth)
 	}
 }
 
@@ -437,15 +439,17 @@ func TestSpinnerShownOnlyInDeadAir(t *testing.T) {
 		}
 	})
 
-	t.Run("render with progress hides spinner", func(t *testing.T) {
+	t.Run("render with progress shows spinner in frame line", func(t *testing.T) {
+		// The spinner now leads the frame/source line (the film glyph was
+		// replaced), so it is present even with live progress data.
 		m := NewModel(true)
 		m.phase = PhaseRendering
 		m.pass2StartTime = time.Now()
 		m.renderState = RenderProgress{Frame: 250, TotalFrames: 1000}
 		var s strings.Builder
 		m.renderRenderingProgress(&s)
-		if strings.Contains(s.String(), glyph(m)) {
-			t.Error("spinner glyph present in rendering progress with progress data")
+		if !strings.Contains(s.String(), glyph(m)) {
+			t.Error("spinner glyph absent from frame/source line in rendering progress")
 		}
 	})
 }

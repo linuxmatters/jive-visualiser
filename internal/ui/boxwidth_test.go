@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ func boxWidthFixture(t *testing.T, width int) *Model {
 		FileSize:    12345678,
 		VideoCodec:  "H.264 1920×1080",
 		AudioCodec:  "AAC 44.1kHz stereo",
+		EncoderName: "h264_vaapi",
 		BarHeights:  bars,
 		FrameData:   image.NewRGBA(image.Rect(0, 0, 1920, 1080)),
 	}
@@ -108,5 +110,66 @@ func TestBoxesShareOuterWidth(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestProgressRowSpansContentWidth asserts the Pass 2 progress row (bar plus
+// right-justified percentage) spans exactly the box content area and the
+// percentage sits flush at the right edge.
+func TestProgressRowSpansContentWidth(t *testing.T) {
+	m := boxWidthFixture(t, 120)
+	m.phase = PhaseRendering
+
+	var s strings.Builder
+	m.renderRenderingProgress(&s)
+	row := stripStyles(strings.SplitN(s.String(), "\n", 2)[0])
+
+	wantWidth := m.boxContentWidth() - 6
+	if w := lipgloss.Width(row); w != wantWidth {
+		t.Errorf("progress row width = %d, want %d (content area)", w, wantWidth)
+	}
+	if !strings.HasSuffix(strings.TrimRight(row, " "), "%") {
+		t.Errorf("progress row does not end with a percentage: %q", row)
+	}
+	// The percentage is right-justified within a fixed field, so its last
+	// non-space cell ends at the content's right edge with no trailing pad.
+	if strings.HasSuffix(row, " ") {
+		t.Errorf("progress row has trailing space, percentage not flush right: %q", row)
+	}
+}
+
+// TestCodecLineRightAlignsToCardsRow asserts the frame/source line right-aligns
+// the codec info so its last cell ends at the gauge-cards row width, with the
+// encoder name in brackets and no audio duration.
+func TestCodecLineRightAlignsToCardsRow(t *testing.T) {
+	m := boxWidthFixture(t, 120)
+	m.phase = PhaseRendering
+
+	var s strings.Builder
+	m.renderRenderingProgress(&s)
+	lines := strings.Split(s.String(), "\n")
+	codecLine := stripStyles(lines[len(lines)-1])
+
+	// Layout: progress row, blank, the 3-line gauge-cards block, then the codec
+	// line. The cards block width is the right-alignment target; measure it,
+	// skipping the wider full-width progress row and the blank separator.
+	wantWidth := 0
+	for _, line := range lines[2 : len(lines)-1] {
+		if w := lipgloss.Width(stripStyles(line)); w > wantWidth {
+			wantWidth = w
+		}
+	}
+
+	if w := lipgloss.Width(codecLine); w != wantWidth {
+		t.Errorf("codec line width = %d, want %d (cards-row width)", w, wantWidth)
+	}
+	if !strings.HasSuffix(codecLine, "AAC 44.1kHz") {
+		t.Errorf("codec line should end with the audio codec, got %q", codecLine)
+	}
+	if !strings.Contains(codecLine, "H.264 (h264_vaapi)") {
+		t.Errorf("codec line missing bracketed encoder name, got %q", codecLine)
+	}
+	if strings.ContainsRune(codecLine, '♪') {
+		t.Errorf("codec line still shows the audio duration glyph, got %q", codecLine)
 	}
 }

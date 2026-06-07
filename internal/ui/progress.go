@@ -58,6 +58,7 @@ type RenderProgress struct {
 	FrameData   *image.RGBA
 	VideoCodec  string
 	AudioCodec  string
+	EncoderName string
 }
 
 // RenderComplete signals completion of Pass 2
@@ -186,6 +187,10 @@ type Model struct {
 // between Pass 1, Pass 2 and the completion screen.
 const boxDesignWidth = 80
 
+// midGrey is a neutral grey used for the frame-line spinner and the encoder-name
+// brackets, distinct from the lighter theme.WarmGray used for labels.
+var midGrey = lipgloss.Color("#808080")
+
 // boxContentWidth returns the shared outer width applied to every bordered box.
 // lipgloss treats .Width(n) on a bordered style as the box's overall width
 // (border included), so applying this single value to all box styles yields
@@ -198,6 +203,33 @@ func (m *Model) boxContentWidth() int {
 		return m.width
 	}
 	return boxDesignWidth
+}
+
+// percentFieldWidth is the fixed cell width reserved for the right-justified
+// percentage label (e.g. " 100%", "   9%"). Holding it constant stops the bar's
+// right edge jittering as the value grows from one to three digits.
+const percentFieldWidth = 5
+
+// progressBarWidth returns the fixed progress-bar fill width so the bar plus the
+// reserved percentage field together span the box content area (boxContentWidth
+// minus border 2 and padding 4). The bar is derived from the design width, not
+// the terminal, so it stays stable at the design width regardless of terminal
+// size.
+func (m *Model) progressBarWidth() int {
+	content := m.boxContentWidth() - 6
+	return max(content-percentFieldWidth, 1)
+}
+
+// writeProgressRow renders one full-width progress row: the bar fills the
+// content width and the percentage is right-justified flush to the content's
+// right edge, so the row's right edge sits under the spectrum/preview right edge.
+func writeProgressRow(s *strings.Builder, bar string, percent int) {
+	label := lipgloss.NewStyle().
+		Width(percentFieldWidth).
+		Align(lipgloss.Right).
+		Render(fmt.Sprintf("%d%%", percent))
+	s.WriteString(bar)
+	s.WriteString(label)
 }
 
 // newProgressBar builds a fire-gradient progress bar of the given width with the
@@ -214,8 +246,9 @@ func newProgressBar(width int) progress.Model {
 
 // NewModel creates a new unified progress UI model
 func NewModel(noPreview bool) *Model {
-	// Main 40-wide bar for pass progress.
-	p := newProgressBar(40)
+	// Full-width pass bar: derived from the design content width minus the
+	// reserved percentage field, so the bar plus percentage span the box.
+	p := newProgressBar(boxDesignWidth - 6 - percentFieldWidth)
 
 	// Smaller progress bar for summary performance charts
 	summaryBar := newProgressBar(30)
@@ -231,7 +264,7 @@ func NewModel(noPreview bool) *Model {
 	// to the fire palette.
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(theme.FireOrange)
+	sp.Style = lipgloss.NewStyle().Foreground(midGrey)
 
 	// One spring per displayed bar (config.NumBars == 64). Springs share the same
 	// coefficients; positions and velocities are per-bar. Initialised at rest at
@@ -270,7 +303,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.progressBar.SetWidth(min(msg.Width-30, 50))
+		// Fixed design-width bar: stable regardless of terminal width.
+		m.progressBar.SetWidth(m.progressBarWidth())
 		return m, nil
 
 	case AnalysisProgress:
@@ -299,9 +333,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass 2 starts from an empty fill: the shared bar still targets Pass 1's
 		// ~100%, and SetPercent would animate it DOWN to the first small Pass 2
 		// percent. An instant recreate resets the target to 0 with no drain, while
-		// keeping the animated View() fill for Pass 2. Width was set on
-		// WindowSizeMsg, so preserve it across the recreate.
-		m.progressBar = newProgressBar(m.progressBar.Width())
+		// keeping the animated View() fill for Pass 2.
+		m.progressBar = newProgressBar(m.progressBarWidth())
 		m.phase = PhaseRendering
 		m.pass2StartTime = time.Now()
 		return m, nil
@@ -410,9 +443,7 @@ func (m *Model) renderFinalProgress() string {
 	s.WriteString("\n\n")
 
 	// Progress bar at 100%
-	progressBar := m.progressBar.ViewAs(1.0)
-	s.WriteString(progressBar)
-	s.WriteString("  100%")
+	writeProgressRow(&s, m.progressBar.ViewAs(1.0), 100)
 	s.WriteString("\n\n")
 
 	// Final timing - calculate and display final speed
@@ -507,10 +538,7 @@ func (m *Model) renderAnalysisProgress(s *strings.Builder) {
 	case m.analysisProgress.TotalFrames > 0:
 		// We have frame count, show progress bar
 		percent := float64(m.analysisProgress.Frame) / float64(m.analysisProgress.TotalFrames)
-		progressBar := m.progressBar.View()
-
-		s.WriteString(progressBar)
-		fmt.Fprintf(s, "  %d%%", int(percent*100))
+		writeProgressRow(s, m.progressBar.View(), int(percent*100))
 	case m.analysisProgress.Frame > 0:
 		// No total, show frame count with elapsed time. Spinner signals live work.
 		s.WriteString(m.spinner.View())
@@ -539,9 +567,7 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 	// Progress is based on video frames (audio is encoded alongside each frame)
 	percent := float64(m.renderState.Frame) / float64(m.renderState.TotalFrames)
 
-	progressBar := m.progressBar.View()
-	s.WriteString(progressBar)
-	fmt.Fprintf(s, "  %d%%", int(percent*100))
+	writeProgressRow(s, m.progressBar.View(), int(percent*100))
 	s.WriteString("\n\n")
 
 	// Timing information. Derive elapsed from wall-clock at render time so the
@@ -577,12 +603,13 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 	sizeCard := gaugeCard("🖬", lipgloss.Color("#FF8C00"), "Size", formatSizeGlyph(m.renderState.FileSize), 11)
 	etaCard := gaugeCard("🞋", lipgloss.Color("#FF2D2D"), "ETA", formatDuration(eta), 10)
 
-	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", sizeCard, " ", etaCard))
+	cardsRow := lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", sizeCard, " ", etaCard)
+	s.WriteString(cardsRow)
 
 	// Frame counter and a compact source/codec/size summary on one line, below the
-	// gauge cards.
+	// gauge cards. The codec info is right-aligned to end under the cards row.
 	s.WriteString("\n")
-	m.writeFrameSourceLine(s)
+	m.writeFrameSourceLine(s, lipgloss.Width(cardsRow))
 }
 
 // recordSpeedSample appends the current realtime speed to the bounded history
@@ -648,37 +675,55 @@ func (m *Model) spectrumWidth() int {
 	return max(m.boxContentWidth()-6, 10)
 }
 
-// writeFrameSourceLine writes the combined "🎞 Frame X / Y    ♪ duration · video
-// · audio" line. The output file size lives in the Size gauge card instead. The
-// source summary is omitted until any duration/codec data arrives.
-func (m *Model) writeFrameSourceLine(s *strings.Builder) {
+// writeFrameSourceLine writes the "<spinner> Frame X / Y … video · audio" line.
+// The animated spinner (mid grey) leads the frame counter on the left; the codec
+// info (video codec with the live encoder name in mid-grey brackets, then the
+// audio codec) is right-aligned so its last character ends at rowWidth, the gauge
+// cards row width. The output file size lives in the Size gauge card; the source
+// duration is omitted. The codec summary is dropped until any codec data arrives.
+func (m *Model) writeFrameSourceLine(s *strings.Builder, rowWidth int) {
 	labelStyle := lipgloss.NewStyle().Foreground(theme.WarmGray)
 	valueStyle := lipgloss.NewStyle().Bold(true)
+	greyStyle := lipgloss.NewStyle().Foreground(midGrey)
 
 	frame := lipgloss.JoinHorizontal(lipgloss.Top,
-		labelStyle.Render("🎞 Frame "),
+		m.spinner.View(),
+		labelStyle.Render("Frame: "),
 		valueStyle.Render(fmt.Sprintf("%d / %d", m.renderState.Frame, m.renderState.TotalFrames)),
 	)
 
-	var parts []string
-	if m.audioProfile != nil {
-		parts = append(parts, fmt.Sprintf("%.1fs", m.audioProfile.Duration.Seconds()))
-	}
+	var codec string
 	if m.renderState.VideoCodec != "" {
-		parts = append(parts, compactCodec(m.renderState.VideoCodec))
+		video := valueStyle.Render(compactCodec(m.renderState.VideoCodec))
+		if m.renderState.EncoderName != "" {
+			video = lipgloss.JoinHorizontal(lipgloss.Top,
+				video,
+				valueStyle.Render(" "),
+				greyStyle.Render(fmt.Sprintf("(%s)", m.renderState.EncoderName)),
+			)
+		}
+		codec = video
 	}
 	if m.renderState.AudioCodec != "" {
-		parts = append(parts, compactCodec(m.renderState.AudioCodec))
+		audio := valueStyle.Render(compactCodec(m.renderState.AudioCodec))
+		if codec != "" {
+			codec = lipgloss.JoinHorizontal(lipgloss.Top, codec, valueStyle.Render(" · "), audio)
+		} else {
+			codec = audio
+		}
 	}
 
-	s.WriteString(frame)
-	if len(parts) > 0 {
-		source := lipgloss.JoinHorizontal(lipgloss.Top,
-			labelStyle.Render("    ♪ "),
-			valueStyle.Render(strings.Join(parts, " · ")),
-		)
-		s.WriteString(source)
+	if codec == "" {
+		s.WriteString(frame)
+		return
 	}
+
+	// Right-align the codec info so its last cell ends at rowWidth. Floor the gap
+	// at 1 cell so the two segments never collide or wrap.
+	gap := max(rowWidth-lipgloss.Width(frame)-lipgloss.Width(codec), 1)
+	s.WriteString(frame)
+	s.WriteString(strings.Repeat(" ", gap))
+	s.WriteString(codec)
 }
 
 // Helper functions

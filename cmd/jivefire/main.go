@@ -569,6 +569,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 				FrameData:   frameData,
 				VideoCodec:  fmt.Sprintf("H.264 %d×%d", config.Width, config.Height),
 				AudioCodec:  audioCodecInfo,
+				EncoderName: enc.EncoderName(),
 			})
 		}
 
