@@ -96,6 +96,57 @@ func TestSpectrumSpringsInterpolate(t *testing.T) {
 	}
 }
 
+// TestRenderSpectrumColumnCount verifies renderSpectrum always emits exactly
+// width columns per row, both when upsampling (width > bar count, bars stretched
+// across columns) and downsampling (width < bar count, bars strided down).
+func TestRenderSpectrumColumnCount(t *testing.T) {
+	bars := make([]float64, config.NumBars)
+	for i := range bars {
+		bars[i] = float64(i%8) / 7.0
+	}
+
+	tests := []struct {
+		name  string
+		width int
+	}{
+		{name: "upsample beyond bar count", width: 74},
+		{name: "exact bar count", width: config.NumBars},
+		{name: "downsample below bar count", width: 32},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := renderSpectrum(bars, tc.width)
+			rows := strings.Split(out, "\n")
+			if len(rows) != 2 {
+				t.Fatalf("expected 2 rows, got %d", len(rows))
+			}
+			for r, row := range rows {
+				// Each column is one cell; the block runes are all single-width, so the
+				// rune count after stripping styles is the column count.
+				cols := len([]rune(stripStyles(row)))
+				if cols != tc.width {
+					t.Errorf("row %d has %d columns, want %d", r, cols, tc.width)
+				}
+			}
+		})
+	}
+}
+
+// TestSpectrumWidthMatchesPreviewBox asserts the live spectrum width equals the
+// preview box's rendered width (preview content + its 1-cell border on each
+// side), so the visualisation spans the preview edge to edge.
+func TestSpectrumWidthMatchesPreviewBox(t *testing.T) {
+	m := NewModel(false)
+	want := DefaultPreviewConfig().Width + 2
+	if got := m.spectrumWidth(); got != want {
+		t.Errorf("spectrumWidth() = %d, want preview box width %d", got, want)
+	}
+	if want != 74 {
+		t.Errorf("preview box width = %d, want 74", want)
+	}
+}
+
 // TestRenderSpectrumNormalisesToBars verifies the spectrum normalises to the
 // loudest current bar so a mid-level bar still fills the chart. The 50-unit bar
 // is half the 100-unit max, which renders as a full bottom-row block.

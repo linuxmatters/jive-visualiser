@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -11,9 +12,18 @@ import (
 // tick advances the springs by exactly one repaint interval. Angular frequency
 // and damping are chosen so bars chase a new target quickly without overshoot.
 const (
-	spectrumSpringFreq    = 8.0
+	// spectrumSpringFreq sets how fast bars chase a new target. Raised from 8.0
+	// so the spectrum tracks the audio livelier, closer to the Speed sparkline's
+	// energy; damping stays critical (1.0) so faster tracking adds no jitter.
+	spectrumSpringFreq    = 15.0
 	spectrumSpringDamping = 1.0
 )
+
+// spectrumColourGamma curves the normalised bar height before it maps to the
+// fire-ramp index. A value below 1.0 lifts mid-level bars toward the
+// orange/yellow band so a typical spectrum (tall centre, short flanks) shows
+// warm colour across the mids instead of a flat red baseline.
+const spectrumColourGamma = 0.5
 
 // spectrumSpringDelta is the spring time step, locked to the UI tick cadence so
 // one tick equals one spring step.
@@ -56,11 +66,6 @@ func renderSpectrum(barHeights []float64, width int) string {
 		return ""
 	}
 
-	stride := len(barHeights) / width
-	if stride == 0 {
-		stride = 1
-	}
-
 	// Normalise to the loudest current bar so the spectrum fills both rows each
 	// frame (per-frame auto-scaling, as the original did).
 	maxHeight := 0.0
@@ -73,10 +78,18 @@ func renderSpectrum(barHeights []float64, width int) string {
 		maxHeight = 1.0 // Avoid division by zero
 	}
 
-	// Collect normalised bar heights for the columns we'll display.
-	displayHeights := make([]float64, 0, width)
-	for i := 0; i < len(barHeights) && len(displayHeights) < width; i += stride {
-		displayHeights = append(displayHeights, barHeights[i]/maxHeight)
+	// Resample the bars to exactly width columns. When width exceeds the bar
+	// count the bars are stretched across the columns (nearest-neighbour
+	// upsampling); when it is smaller they are strided down. Either way each
+	// output column maps to a source bar by index scaling, so the result always
+	// has exactly width columns.
+	displayHeights := make([]float64, width)
+	for col := range width {
+		src := col * len(barHeights) / width
+		if src >= len(barHeights) {
+			src = len(barHeights) - 1
+		}
+		displayHeights[col] = barHeights[src] / maxHeight
 	}
 
 	var result strings.Builder
@@ -135,8 +148,13 @@ func blockClamp(portion float64) int {
 	return idx
 }
 
-// colorClamp maps a 0.0-1.0 normalised height to a valid fire-ramp index.
+// colorClamp maps a 0.0-1.0 normalised height to a valid fire-ramp index. The
+// height is gamma-curved first (spectrumColourGamma < 1) so mid-level bars reach
+// the warmer oranges/yellows rather than clustering at the red baseline.
 func colorClamp(normalised float64, ramp int) int {
+	if normalised > 0 {
+		normalised = math.Pow(normalised, spectrumColourGamma)
+	}
 	idx := int(normalised * float64(ramp-1))
 	if idx >= ramp {
 		idx = ramp - 1

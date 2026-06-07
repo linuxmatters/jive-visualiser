@@ -566,16 +566,18 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 		}
 	}
 
-	// Three stat gauge cards joined horizontally: Time, Speed (with a live
-	// sparkline of recent speed samples), and ETA. The card inner widths are
-	// chosen so the joined row fits the box content area without wrapping.
+	// Four stat gauge cards joined horizontally: Time, Speed (with a live
+	// sparkline of recent speed samples), Size (live output file size) and ETA.
+	// The card inner widths are chosen so the joined row plus its three
+	// separators fits the 74-cell box content area without wrapping.
 	timeCard := gaugeCard("⏱", lipgloss.Color("#FFFFFF"), "Time", fmt.Sprintf("%s / %s",
-		formatDuration(elapsed), formatDuration(estimatedTotal)), 14)
+		formatDuration(elapsed), formatDuration(estimatedTotal)), 13)
 	speedValue := fmt.Sprintf("%.1fx %s", speed, sparkline(m.speedHistory))
 	speedCard := gaugeCard("⚡", theme.WarmGray, "Speed", speedValue, 12)
-	etaCard := gaugeCard("🞋", lipgloss.Color("#FF2D2D"), "ETA", formatDuration(eta), 13)
+	sizeCard := gaugeCard("🖬", lipgloss.Color("#FF8C00"), "Size", formatSizeGlyph(m.renderState.FileSize), 11)
+	etaCard := gaugeCard("🞋", lipgloss.Color("#FF2D2D"), "ETA", formatDuration(eta), 10)
 
-	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", etaCard))
+	s.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", sizeCard, " ", etaCard))
 
 	// Frame counter and a compact source/codec/size summary on one line, below the
 	// gauge cards.
@@ -610,12 +612,13 @@ func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	s.WriteString(lipgloss.NewStyle().Foreground(theme.FireOrange).Render("Live Visualisation:"))
 	s.WriteString("\n")
 
-	// Size the spectrum to the preview content width so it no longer drives the
-	// box width. Draw the spring positions, not the raw target heights, so bars
-	// ease toward new BarHeights over successive ticks. The springs are advanced
-	// only in the tickMsg case; renderSpectrum stays pure over its inputs.
-	spectrumWidth := min(m.spectrumWidth(), config.NumBars)
-	spectrum := renderSpectrum(m.spectrumPos, spectrumWidth)
+	// Size the spectrum to the preview box's rendered width so its left edge and
+	// width line up with the preview below. renderSpectrum upsamples the 64 bars
+	// across the wider column count. Draw the spring positions, not the raw target
+	// heights, so bars ease toward new BarHeights over successive ticks. The
+	// springs are advanced only in the tickMsg case; renderSpectrum stays pure
+	// over its inputs.
+	spectrum := renderSpectrum(m.spectrumPos, m.spectrumWidth())
 	s.WriteString(spectrum)
 
 	// Video preview
@@ -634,19 +637,20 @@ func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	}
 }
 
-// spectrumWidth returns the spectrum width: the preview content width when the
-// preview is shown, otherwise the full box content area. Keeps the spectrum from
-// driving the overall box width.
+// spectrumWidth returns the spectrum width. When the preview is shown it equals
+// the preview box's rendered width (preview content + its 1-cell border on each
+// side), which also equals the box content area, so the spectrum spans the
+// preview edge to edge. Without a preview it falls back to the box content area.
 func (m *Model) spectrumWidth() int {
 	if !m.noPreview {
-		return DefaultPreviewConfig().Width
+		return DefaultPreviewConfig().Width + 2
 	}
 	return max(m.boxContentWidth()-6, 10)
 }
 
 // writeFrameSourceLine writes the combined "🎞 Frame X / Y    ♪ duration · video
-// · audio · size" line. The source summary is omitted until any codec/size data
-// arrives.
+// · audio" line. The output file size lives in the Size gauge card instead. The
+// source summary is omitted until any duration/codec data arrives.
 func (m *Model) writeFrameSourceLine(s *strings.Builder) {
 	labelStyle := lipgloss.NewStyle().Foreground(theme.WarmGray)
 	valueStyle := lipgloss.NewStyle().Bold(true)
@@ -665,9 +669,6 @@ func (m *Model) writeFrameSourceLine(s *strings.Builder) {
 	}
 	if m.renderState.AudioCodec != "" {
 		parts = append(parts, compactCodec(m.renderState.AudioCodec))
-	}
-	if m.renderState.FileSize > 0 {
-		parts = append(parts, formatBytes(m.renderState.FileSize))
 	}
 
 	s.WriteString(frame)
@@ -742,4 +743,23 @@ func formatBytes(bytes int64) string {
 
 	units := []string{"KB", "MB", "GB"}
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
+}
+
+// formatSizeGlyph formats a byte count for the compact Size gauge card. MB and
+// GB use the single-cell unit glyphs ㎆ and ㎇ with no separating space (e.g.
+// "152.8㎆", "1.2㎇"); the rare small cases keep plain "KB"/"B".
+func formatSizeGlyph(bytes int64) string {
+	const unit = 1024
+	switch {
+	case bytes <= 0:
+		return "0㎆"
+	case bytes < unit:
+		return fmt.Sprintf("%d B", bytes)
+	case bytes < unit*unit:
+		return fmt.Sprintf("%.1f KB", float64(bytes)/unit)
+	case bytes < unit*unit*unit:
+		return fmt.Sprintf("%.1f㎆", float64(bytes)/(unit*unit))
+	default:
+		return fmt.Sprintf("%.1f㎇", float64(bytes)/(unit*unit*unit))
+	}
 }
