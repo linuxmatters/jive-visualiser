@@ -313,7 +313,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	}
 	defer reader.Close()
 
-	// Initialize encoder with video and audio (using new sample-based API)
+	// Initialise encoder with video and audio (using new sample-based API)
 	enc, err := encoder.New(encoder.Config{
 		OutputPath:    cfg.outputFile,
 		Width:         config.Width,
@@ -331,7 +331,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 
 	err = enc.Initialize()
 	if err != nil {
-		cli.PrintError(fmt.Sprintf("initializing encoder: %v", err))
+		cli.PrintError(fmt.Sprintf("initialising encoder: %v", err))
 		p.Quit()
 		return
 	}
@@ -411,6 +411,14 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	// Pre-allocate reusable buffers for audio processing (avoid per-frame allocations)
 	newSamples := make([]float64, samplesPerFrame)
 	audioSamples := make([]float32, samplesPerFrame)
+	// The reader downmixes to mono. For stereo output the encoder expects
+	// interleaved L,R pairs, so duplicate each mono sample into both channels via
+	// this pre-allocated buffer (no per-frame allocation).
+	stereo := cfg.channels == 2
+	var stereoSamples []float32
+	if stereo {
+		stereoSamples = make([]float32, samplesPerFrame*2)
+	}
 
 	// Pre-fill buffer with first chunk
 	n, err := audio.FillFFTBuffer(reader, fftBuffer)
@@ -430,11 +438,22 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	// WriteAudioSamples copies into the FIFO and retains no reference, and the
 	// buffer is overwritten before each later use in the render loop.
 	initialCount := min(samplesPerFrame, n)
-	for i := range initialCount {
-		audioSamples[i] = float32(fftBuffer[i])
+	var initialErr error
+	if stereo {
+		for i := range initialCount {
+			s := float32(fftBuffer[i])
+			stereoSamples[i*2] = s
+			stereoSamples[i*2+1] = s
+		}
+		initialErr = enc.WriteAudioSamples(stereoSamples[:initialCount*2])
+	} else {
+		for i := range initialCount {
+			audioSamples[i] = float32(fftBuffer[i])
+		}
+		initialErr = enc.WriteAudioSamples(audioSamples[:initialCount])
 	}
-	if err := enc.WriteAudioSamples(audioSamples[:initialCount]); err != nil {
-		cli.PrintError(fmt.Sprintf("error writing initial audio: %v", err))
+	if initialErr != nil {
+		cli.PrintError(fmt.Sprintf("error writing initial audio: %v", initialErr))
 		p.Quit()
 		return
 	}
@@ -594,12 +613,24 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 
 		// Write audio samples for this frame to encoder
 		// Convert float64 samples to float32 for AAC encoder
-		// Uses pre-allocated audioSamples buffer, slice to actual length
-		for i := range nRead {
-			audioSamples[i] = float32(newSamples[i])
+		// Uses pre-allocated buffers, sliced to actual length. For stereo the
+		// mono signal is duplicated into both interleaved channels.
+		var writeErr error
+		if stereo {
+			for i := range nRead {
+				s := float32(newSamples[i])
+				stereoSamples[i*2] = s
+				stereoSamples[i*2+1] = s
+			}
+			writeErr = enc.WriteAudioSamples(stereoSamples[:nRead*2])
+		} else {
+			for i := range nRead {
+				audioSamples[i] = float32(newSamples[i])
+			}
+			writeErr = enc.WriteAudioSamples(audioSamples[:nRead])
 		}
-		if err := enc.WriteAudioSamples(audioSamples[:nRead]); err != nil {
-			cli.PrintError(fmt.Sprintf("error writing audio at frame %d: %v", frameNum, err))
+		if writeErr != nil {
+			cli.PrintError(fmt.Sprintf("error writing audio at frame %d: %v", frameNum, writeErr))
 			p.Quit()
 			return
 		}
@@ -625,7 +656,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		return
 	}
 
-	// Finalize encoding
+	// Finalise encoding
 	if err := enc.Close(); err != nil {
 		cli.PrintError(fmt.Sprintf("error closing encoder: %v", err))
 		p.Quit()

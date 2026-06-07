@@ -234,12 +234,38 @@ test-encoder: build
     if [ ! -f testdata/LMP0-stereo.wav ]; then
       ffmpeg -i testdata/LMP0.mp3 -ac 2 testdata/LMP0-stereo.wav
     fi
+    set -euo pipefail
+    # probe_dur returns the duration in seconds of the first audio stream.
+    probe_dur() {
+      ffprobe -v error -select_streams a:0 -show_entries stream=duration \
+        -of default=noprint_wrappers=1:nokey=1 "$1"
+    }
+    # assert_audio_match fails if the output audio duration drifts more than 0.5s
+    # from the source. Catches the stereo desync bug (half-length/double-speed
+    # audio) that a "did it run" check misses.
+    assert_audio_match() {
+      src_dur=$(probe_dur "$1")
+      out_dur=$(probe_dur "$2")
+      delta=$(awk -v a="$src_dur" -v b="$out_dur" 'BEGIN { d = a - b; if (d < 0) d = -d; print d }')
+      ok=$(awk -v d="$delta" 'BEGIN { print (d <= 0.5) ? "1" : "0" }')
+      if [ "$ok" != "1" ]; then
+        echo "FAIL: $2 audio duration ${out_dur}s drifts ${delta}s from source ${src_dur}s ($1)" >&2
+        exit 1
+      fi
+      echo "OK: $2 audio ${out_dur}s matches source ${src_dur}s (Δ${delta}s)"
+    }
     ./jivefire --episode="01" --title "Linux Matters mp3 (mono)" testdata/LMP0.mp3 testdata/LMP0-mp3.mp4
-    ./jivefire --no-preview  --episode="02" --title "Linux Matters mp3 (stereo)" testdata/LMP0-stereo.mp3 testdata/LMP0-mp3-stereo.mp4
+    ./jivefire --no-preview --channels 2 --episode="02" --title "Linux Matters mp3 (stereo)" testdata/LMP0-stereo.mp3 testdata/LMP0-mp3-stereo.mp4
     ./jivefire --episode="01" --title "Linux Matters flac (mono)" testdata/LMP0.flac testdata/LMP0-flac.mp4
-    ./jivefire --no-preview --episode="02" --title "Linux Matters flac (stereo)" testdata/LMP0-stereo.flac testdata/LMP0-flac-stereo.mp4
+    ./jivefire --no-preview --channels 2 --episode="02" --title "Linux Matters flac (stereo)" testdata/LMP0-stereo.flac testdata/LMP0-flac-stereo.mp4
     ./jivefire --episode="01" --title "Linux Matters: wav (mono)" testdata/LMP0.wav testdata/LMP0-wav.mp4
-    ./jivefire --no-preview  --episode="02" --title "Linux Matters: wav (stereo)" testdata/LMP0-stereo.wav testdata/LMP0-wav-stereo.mp4
+    ./jivefire --no-preview --channels 2 --episode="02" --title "Linux Matters: wav (stereo)" testdata/LMP0-stereo.wav testdata/LMP0-wav-stereo.mp4
+    assert_audio_match testdata/LMP0.mp3        testdata/LMP0-mp3.mp4
+    assert_audio_match testdata/LMP0-stereo.mp3 testdata/LMP0-mp3-stereo.mp4
+    assert_audio_match testdata/LMP0.flac       testdata/LMP0-flac.mp4
+    assert_audio_match testdata/LMP0-stereo.flac testdata/LMP0-flac-stereo.mp4
+    assert_audio_match testdata/LMP0.wav        testdata/LMP0-wav.mp4
+    assert_audio_match testdata/LMP0-stereo.wav testdata/LMP0-wav-stereo.mp4
 
 # Run linters
 lint:
