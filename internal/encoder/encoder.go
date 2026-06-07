@@ -179,7 +179,7 @@ func New(config Config) (*Encoder, error) {
 }
 
 // Initialize sets up the FFmpeg encoder pipeline
-func (e *Encoder) Initialize() error {
+func (e *Encoder) Initialize() (err error) {
 	var ret int
 
 	// Suppress FFmpeg log output to prevent interference with TUI
@@ -187,14 +187,22 @@ func (e *Encoder) Initialize() error {
 
 	// Persistent worker pool for per-frame RGB→YUV conversion. The row
 	// partition never changes, so reuse long-lived workers across all frames.
+	// Stop the workers if a later setup step fails, since the caller only
+	// defers Close once Initialize returns successfully.
 	e.rowPool = yuv.NewRowPool(e.config.Height)
+	defer func() {
+		if err != nil && e.rowPool != nil {
+			e.rowPool.Close()
+			e.rowPool = nil
+		}
+	}()
 
 	// Convert Go string to C string
 	outputPath := ffmpeg.ToCStr(e.config.OutputPath)
 	defer outputPath.Free()
 
 	// Allocate output format context
-	ret, err := ffmpeg.AVFormatAllocOutputContext2(&e.formatCtx, nil, nil, outputPath)
+	ret, err = ffmpeg.AVFormatAllocOutputContext2(&e.formatCtx, nil, nil, outputPath)
 	if err := checkFFmpeg(ret, err, "allocate output context"); err != nil {
 		return err
 	}
