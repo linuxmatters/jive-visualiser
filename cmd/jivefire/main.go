@@ -393,6 +393,13 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	const (
 		harmonicaSpringFreq    = 6.0
 		harmonicaSpringDamping = 1.0
+		// harmonicaGain lifts the spring bars toward the amplitude the CAVA path
+		// gets for free from its leaky integrator (steady-state gain
+		// ~1/(1-NoiseReduction) ≈ 4.3x). The peak-hold path has no integrator, so
+		// bars otherwise peak at the raw scaled height and look short. The existing
+		// soft-knee compression caps the loud bars, so this keeps dynamic spread
+		// rather than flattening everything to full height. Tune for taste.
+		harmonicaGain = 2.0
 	)
 	harmonicaDelta := 1.0 / config.Framerate
 	harmonicaSprings := make([]harmonica.Spring, config.NumBars)
@@ -505,7 +512,9 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 			// into prevBarHeights so the downstream rearrange/draw pipeline is shared
 			// with the CAVA path. The CAVA state arrays above are left untouched.
 			for i := range barHeights {
-				currentHeight := barHeights[i]
+				// Apply the spring-path gain so bars reach a CAVA-like amplitude; the
+				// soft-knee below caps the loud ones, preserving dynamic spread.
+				currentHeight := barHeights[i] * harmonicaGain
 
 				if currentHeight >= harmonicaPos[i] {
 					// Instant rise to the new peak; reset velocity so the fall starts
