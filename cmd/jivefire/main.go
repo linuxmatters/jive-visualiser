@@ -416,6 +416,15 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	rearrangedHeights := make([]float64, config.NumBars)
 	barHeightsCopy := make([]float64, config.NumBars) // For UI updates
 
+	// Reusable private RGBA buffer for the preview. The render loop reuses the
+	// frame's internal image every iteration, so the UI goroutine must read a
+	// copy rather than the live buffer the next Draw will overwrite. Allocated
+	// once here, only when preview is enabled, to keep it off the hot path.
+	var previewImg *image.RGBA
+	if !cfg.noPreview {
+		previewImg = image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
+	}
+
 	sensitivity := 1.0
 
 	// Sliding buffer for FFT: we read samplesPerFrame but need FFTSize for FFT.
@@ -581,7 +590,9 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 
 			var frameData *image.RGBA
 			if !cfg.noPreview {
-				frameData = img
+				// Copy into the private buffer; the next frame.Draw mutates img.
+				copy(previewImg.Pix, img.Pix)
+				frameData = previewImg
 			}
 
 			p.Send(ui.RenderProgress{
