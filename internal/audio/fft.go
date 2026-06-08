@@ -15,7 +15,7 @@ import (
 // frequency range, dividing by binsPerBar. Callers apply any normalisation on
 // top of these raw values.
 func binRawMagnitudes(coeffs []complex128, result []float64) {
-	// Use only first half (positive frequencies)
+	// Use only the first half of the spectrum (positive frequencies).
 	halfSize := len(coeffs) / 2
 	maxFreqBin := halfSize
 	binsPerBar := maxFreqBin / config.NumBars
@@ -25,7 +25,6 @@ func binRawMagnitudes(coeffs []complex128, result []float64) {
 		end := start + binsPerBar
 		end = min(end, maxFreqBin)
 
-		// Average magnitude in this range
 		var sum float64
 		for i := start; i < end; i++ {
 			magnitude := cmplx.Abs(coeffs[i])
@@ -36,56 +35,43 @@ func binRawMagnitudes(coeffs []complex128, result []float64) {
 	}
 }
 
-// BinFFT bins FFT coefficients into bars and returns normalized values (0.0-1.0)
-// CAVA-style approach: work in normalized space, apply maxBarHeight scaling later
-// baseScale is calculated from Pass 1 analysis for optimal visualization
-// result buffer is provided by caller to avoid allocations
+// BinFFT bins FFT coefficients into bars and writes normalised values (0.0-1.0)
+// into the caller-provided result buffer. It works in normalised space (the
+// maxBarHeight pixel scaling is applied later); baseScale comes from Pass 1
+// analysis (OptimalBaseScale = 0.85 / GlobalPeak).
 func BinFFT(coeffs []complex128, sensitivity float64, baseScale float64, result []float64) {
-	// Raw per-bar average magnitudes; normalisation is applied on top below
 	binRawMagnitudes(coeffs, result)
 
-	// CAVA-style processing: apply sensitivity, then normalize to 0.0-1.0 range
-	// baseScale provided from Pass 1 analysis: OptimalBaseScale = 0.85 / GlobalPeak
-
 	for i := range result {
-		// Apply sensitivity to raw magnitude
 		scaled := result[i] * baseScale * sensitivity
 
-		// Noise gate on raw values (before log scale)
+		// Noise gate on the raw value, before the log scale.
 		if scaled < 0.01 {
 			result[i] = 0
 		} else {
-			// Log scale for better visual distribution, normalize to ~0.0-1.0
-			// Log10(1 + scaled*9) gives range [0, 1] for scaled in [0, 1]
-			// We scale up for better dynamic range
+			// Log10(1 + scaled*9) maps scaled in [0,1] to ~[0,1] for better visual
+			// dynamic range. Deliberately unclipped so the main loop's overshoot
+			// detection can drive sensitivity.
 			result[i] = math.Log10(1 + scaled*9)
-
-			// DON'T clip here - let overshoot detection in main loop handle it
-			// This allows sensitivity adjustment to detect actual overshoots
 		}
 	}
 }
 
-// RearrangeFrequenciesCenterOut creates a symmetric mirror pattern with most active frequencies at CENTER
-// result buffer is provided by caller to avoid allocations
+// RearrangeFrequenciesCenterOut mirrors the bars symmetrically about the centre,
+// writing into the caller-provided result buffer. Low frequencies (bass) land at
+// the centre and high frequencies fan out to the edges, so a quieter input still
+// looks balanced.
 func RearrangeFrequenciesCenterOut(barHeights []float64, result []float64) {
-	// Left side: frequencies 0→31 placed from CENTER → LEFT EDGE (most active at center)
-	// Right side: frequencies 0→31 mirrored from CENTER → RIGHT EDGE
-	// Result: Most active (bass) at center, less active (highs) at edges
-
 	n := len(barHeights)
 	center := n / 2
 
-	// Place first half of frequencies mirrored from center outward
 	for i := 0; i < n/2; i++ {
-		// Left side: place from center going left (most active near center)
-		result[center-1-i] = barHeights[i]
-		// Right side: mirror (most active near center)
-		result[center+i] = barHeights[i]
+		result[center-1-i] = barHeights[i] // centre → left edge
+		result[center+i] = barHeights[i]   // centre → right edge (mirror)
 	}
 }
 
-// Processor handles FFT analysis for visualization
+// Processor handles FFT analysis for visualisation.
 type Processor struct {
 	// Pre-computed Hanning window coefficients (avoids trig per sample)
 	hanningWindow []float64
@@ -93,9 +79,8 @@ type Processor struct {
 	fftInput []complex128
 }
 
-// NewProcessor creates a new audio processor with pre-computed Hanning window
+// NewProcessor creates a new audio processor with a pre-computed Hanning window.
 func NewProcessor() *Processor {
-	// Pre-compute Hanning window coefficients once
 	window := make([]float64, config.FFTSize)
 	n := float64(config.FFTSize - 1)
 	for i := range config.FFTSize {
@@ -125,10 +110,9 @@ func (p *Processor) ProcessChunk(samples []float64) []complex128 {
 		p.fftInput[i] = 0
 	}
 
-	// Compute FFT in-place on the reusable buffer
 	err := gofft.FFT(p.fftInput)
 	if err != nil {
-		// Should never happen with power-of-2 size
+		// Cannot happen with a power-of-2 size.
 		panic("FFT failed: " + err.Error())
 	}
 

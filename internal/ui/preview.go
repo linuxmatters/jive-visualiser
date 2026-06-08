@@ -30,32 +30,29 @@ func DownsampleFrame(frame *image.RGBA, config PreviewConfig) [][]color.RGBA {
 	srcWidth := bounds.Dx()
 	srcHeight := bounds.Dy()
 
-	// Calculate how many source pixels each terminal cell represents
+	// Source pixels covered by each terminal cell.
 	cellWidth := srcWidth / config.Width
 	cellHeight := srcHeight / config.Height
 
 	preview := make([][]color.RGBA, config.Height)
 
-	// Direct access to underlying pixel data for faster iteration
+	// Access the pixel buffer directly; much faster than frame.At().
 	stride := frame.Stride
 	pix := frame.Pix
 
 	for row := 0; row < config.Height; row++ {
 		preview[row] = make([]color.RGBA, config.Width)
 		for col := 0; col < config.Width; col++ {
-			// Calculate the region of the source image this cell represents
 			srcX := col * cellWidth
 			srcY := row * cellHeight
 
-			// Average all pixels in this cell region for better quality
+			// Average every source pixel in this cell's region.
 			var sumR, sumG, sumB uint32
 			pixelCount := uint32(0)
 
 			for y := srcY; y < srcY+cellHeight && y < srcHeight; y++ {
-				// Calculate offset to start of row in pixel buffer
 				offset := y*stride + srcX*4
 				for x := 0; x < cellWidth && srcX+x < srcWidth; x++ {
-					// Direct access to RGBA bytes (much faster than frame.At())
 					sumR += uint32(pix[offset])
 					sumG += uint32(pix[offset+1])
 					sumB += uint32(pix[offset+2])
@@ -64,7 +61,6 @@ func DownsampleFrame(frame *image.RGBA, config PreviewConfig) [][]color.RGBA {
 				}
 			}
 
-			// Calculate average RGB values
 			if pixelCount > 0 {
 				preview[row][col] = color.RGBA{
 					R: uint8(sumR / pixelCount), //nolint:gosec // average of uint8 values fits in uint8
@@ -86,24 +82,20 @@ func RenderPreview(preview [][]color.RGBA) string {
 		return ""
 	}
 
-	// Pre-allocate string builder for efficiency
 	var builder strings.Builder
-	// Estimate: ~20 bytes per pixel (ANSI escape) + borders
+	// Roughly ~20 bytes per pixel (ANSI escape) plus borders.
 	builder.Grow(len(preview) * len(preview[0]) * 20)
 
-	// Top border
 	builder.WriteString("\n┌")
 	builder.WriteString(strings.Repeat("─", len(preview[0])))
 	builder.WriteString("┐\n")
 
-	// Pre-allocate buffer for color escape codes
 	colorBuf := make([]byte, 0, 32)
 
-	// Render each row with true color
 	for _, row := range preview {
 		builder.WriteString("│")
 		for _, pixel := range row {
-			// Build ANSI escape manually (faster than fmt.Sprintf)
+			// Build the ANSI escape by hand; faster than fmt.Sprintf.
 			colorBuf = colorBuf[:0]
 			colorBuf = append(colorBuf, "\x1b[48;2;"...)
 			colorBuf = strconv.AppendInt(colorBuf, int64(pixel.R), 10)
@@ -117,7 +109,6 @@ func RenderPreview(preview [][]color.RGBA) string {
 		builder.WriteString("│\n")
 	}
 
-	// Bottom border
 	builder.WriteString("└")
 	builder.WriteString(strings.Repeat("─", len(preview[0])))
 	builder.WriteString("┘")

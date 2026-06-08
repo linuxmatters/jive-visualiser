@@ -440,7 +440,6 @@ func (m *Model) AssetWarnings() []string {
 func (m *Model) renderFinalProgress() string {
 	var s strings.Builder
 
-	// Title
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.FireYellow).
@@ -451,7 +450,6 @@ func (m *Model) renderFinalProgress() string {
 	s.WriteString(lipgloss.NewStyle().Foreground(theme.FireOrange).Render("Pass 2: Rendering & Encoding"))
 	s.WriteString("\n\n")
 
-	// Progress bar at 100%
 	writeProgressRow(&s, m.progressBar.ViewAs(1.0), 100)
 	s.WriteString("\n\n")
 
@@ -495,7 +493,6 @@ func (m *Model) renderFinalProgress() string {
 func (m *Model) renderProgress() string {
 	var s strings.Builder
 
-	// Title
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.FireYellow).
@@ -504,7 +501,6 @@ func (m *Model) renderProgress() string {
 	s.WriteString(title)
 	s.WriteString("\n")
 
-	// Phase indicator
 	var phaseLabel string
 	if m.phase == PhaseAnalysis {
 		phaseLabel = "Pass 1: Analysing Audio"
@@ -514,7 +510,6 @@ func (m *Model) renderProgress() string {
 	s.WriteString(lipgloss.NewStyle().Foreground(theme.FireOrange).Render(phaseLabel))
 	s.WriteString("\n\n")
 
-	// Progress bar and timing
 	if m.phase == PhaseAnalysis {
 		m.renderAnalysisProgress(&s)
 	} else {
@@ -551,11 +546,10 @@ func (m *Model) renderHelpFooter() string {
 func (m *Model) renderAnalysisProgress(s *strings.Builder) {
 	switch {
 	case m.analysisProgress.TotalFrames > 0:
-		// We have frame count, show progress bar
 		percent := float64(m.analysisProgress.Frame) / float64(m.analysisProgress.TotalFrames)
 		writeProgressRow(s, m.progressBar.View(), int(percent*100))
 	case m.analysisProgress.Frame > 0:
-		// No total, show frame count with elapsed time. Spinner signals live work.
+		// No total: show frame count with elapsed time. Spinner signals live work.
 		s.WriteString(m.spinner.View())
 		s.WriteString(" ")
 		s.WriteString(lipgloss.NewStyle().Faint(true).Render("Analysing..."))

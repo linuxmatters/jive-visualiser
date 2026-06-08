@@ -29,8 +29,8 @@ type Profile struct {
 	GlobalRMS    float64 // Average RMS across all frames
 	DynamicRange float64 // Ratio of GlobalPeak to GlobalRMS
 
-	// Calculated optimal parameters
-	OptimalBaseScale float64 // Replaces hardcoded 0.0075
+	// Bar-scaling factor derived from GlobalPeak (see AnalyzeAudio).
+	OptimalBaseScale float64
 
 	// Audio metadata
 	SampleRate int
@@ -42,17 +42,15 @@ type ProgressCallback func(frame int, currentRMS, currentPeak float64, barHeight
 
 // AnalyzeAudio performs Pass 1: stream through audio and collect statistics.
 func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error) {
-	// Open streaming reader
 	reader, err := NewStreamingReader(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audio: %w", err)
 	}
 	defer reader.Close()
 
+	// NumFrames and Duration are derived from the actual sample count below.
 	profile := &Profile{
-		NumFrames:  0, // Will be set after we count actual samples
 		SampleRate: reader.SampleRate(),
-		Duration:   0, // Will be calculated from actual sample count
 	}
 
 	// Calculate frame size from the file's actual sample rate so each frame
@@ -62,18 +60,15 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 		return nil, fmt.Errorf("input sample rate too low for %d FPS: %d Hz", config.FPS, reader.SampleRate())
 	}
 
-	// Create FFT processor
 	processor := NewProcessor()
 
-	// Analyze each frame
 	var sumRMS float64
 	var maxPeak float64
 
-	// Sliding buffer for FFT: we advance by samplesPerFrame but need FFTSize for FFT
+	// Sliding buffer for FFT: we advance by samplesPerFrame but need FFTSize for FFT.
 	fftBuffer := make([]float64, config.FFTSize)
 	frameBuf := make([]float64, samplesPerFrame)
 
-	// Pre-fill buffer with first chunk
 	n, err := FillFFTBuffer(reader, fftBuffer)
 	if err != nil {
 		return nil, fmt.Errorf("error reading initial chunk: %w", err)
@@ -89,14 +84,12 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 	frameNum := 0
 
 	for {
-		// Pass fftBuffer directly to ProcessChunk - it applies the pre-computed Hanning window
-		// No need for intermediate allocation since analyzeFrame only reads the buffer
+		// ProcessChunk reads fftBuffer in place (applying the pre-computed Hanning
+		// window), so no intermediate copy is needed.
 		coeffs := processor.ProcessChunk(fftBuffer)
 
-		// Analyze frequency bins
 		analysis := analyzeFrame(coeffs, fftBuffer, barHeights)
 
-		// Track global statistics
 		if analysis.PeakMagnitude > maxPeak {
 			maxPeak = analysis.PeakMagnitude
 		}
@@ -104,17 +97,15 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 
 		frameNum++
 
-		// Send progress update via callback (throttle to every 3 frames for performance)
+		// Throttle progress callbacks to every third frame.
 		if progressCb != nil && frameNum%3 == 0 {
 			elapsed := time.Since(startTime)
 			progressCb(frameNum, analysis.RMSLevel, analysis.PeakMagnitude, barHeights, elapsed)
 		}
 
-		// Advance sliding buffer for next frame
 		nRead, err := ReadNextFrame(reader, frameBuf)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				// Send final progress update
 				if progressCb != nil {
 					elapsed := time.Since(startTime)
 					progressCb(frameNum, analysis.RMSLevel, analysis.PeakMagnitude, barHeights, elapsed)
@@ -124,7 +115,7 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 			return nil, fmt.Errorf("error reading audio at frame %d: %w", frameNum, err)
 		}
 
-		// Shift buffer left by samplesPerFrame, append new samples
+		// Shift buffer left by samplesPerFrame, append new samples.
 		copy(fftBuffer, fftBuffer[samplesPerFrame:])
 		copy(fftBuffer[config.FFTSize-samplesPerFrame:], frameBuf[:nRead])
 		if nRead < samplesPerFrame {
@@ -132,31 +123,26 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 		}
 	}
 
-	// Set actual frame count and duration
-	// Duration is based on the number of frames, not total samples read
-	// Each frame represents samplesPerFrame of actual audio advancement
+	// Duration tracks the number of frames advanced, not total samples read; each
+	// frame represents samplesPerFrame of audio.
 	profile.NumFrames = frameNum
 	profile.Duration = float64(frameNum*samplesPerFrame) / float64(reader.SampleRate())
 
-	// Calculate global statistics
 	profile.GlobalPeak = maxPeak
 	profile.GlobalRMS = sumRMS / float64(profile.NumFrames)
 
-	// Avoid division by zero
 	if profile.GlobalRMS > 0 {
 		profile.DynamicRange = profile.GlobalPeak / profile.GlobalRMS
 	} else {
 		profile.DynamicRange = 0
 	}
 
-	// Calculate optimal baseScale
-	// Goal: GlobalPeak should map to ~0.8-0.9 in normalized space
-	// Current formula: scaled = magnitude * baseScale * sensitivity
-	// We want: GlobalPeak * baseScale * 1.0 ≈ 0.85
+	// Choose baseScale so GlobalPeak maps to ~0.85 in normalised space, given the
+	// render formula scaled = magnitude * baseScale * sensitivity at sensitivity 1.
 	if profile.GlobalPeak > 0 {
 		profile.OptimalBaseScale = 0.85 / profile.GlobalPeak
 	} else {
-		// Fallback to original hardcoded value if no audio detected
+		// Fall back to the original hardcoded value when no audio is detected.
 		profile.OptimalBaseScale = 0.0075
 	}
 

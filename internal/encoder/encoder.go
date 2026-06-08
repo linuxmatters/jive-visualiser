@@ -182,7 +182,7 @@ func New(config Config) (*Encoder, error) {
 func (e *Encoder) Initialize() (err error) {
 	var ret int
 
-	// Suppress FFmpeg log output to prevent interference with TUI
+	// Suppress FFmpeg log output so it does not corrupt the TUI.
 	ffmpeg.AVLogSetLevel(ffmpeg.AVLogQuiet)
 
 	// Persistent worker pool for per-frame RGB→YUV conversion. The row
@@ -197,11 +197,9 @@ func (e *Encoder) Initialize() (err error) {
 		}
 	}()
 
-	// Convert Go string to C string
 	outputPath := ffmpeg.ToCStr(e.config.OutputPath)
 	defer outputPath.Free()
 
-	// Allocate output format context
 	ret, err = ffmpeg.AVFormatAllocOutputContext2(&e.formatCtx, nil, nil, outputPath)
 	if err := checkFFmpeg(ret, err, "allocate output context"); err != nil {
 		return err
@@ -266,42 +264,34 @@ func (e *Encoder) Initialize() (err error) {
 		}
 	}
 
-	// Create video stream
 	e.videoStream = ffmpeg.AVFormatNewStream(e.formatCtx, nil)
 	if e.videoStream == nil {
 		return fmt.Errorf("failed to create video stream")
 	}
 	e.videoStream.SetId(0)
 
-	// Allocate codec context
 	e.videoCodec = ffmpeg.AVCodecAllocContext3(codec)
 	if e.videoCodec == nil {
 		return fmt.Errorf("failed to allocate codec context")
 	}
 
-	// Configure video encoder for YouTube compatibility
 	e.videoCodec.SetWidth(e.config.Width)
 	e.videoCodec.SetHeight(e.config.Height)
 
-	// Configure pixel format and hardware context based on encoder type
 	if err := e.configurePixelFormat(); err != nil {
 		return err
 	}
 
-	// Set time base (1/framerate)
 	timeBase := ffmpeg.AVMakeQ(1, e.config.Framerate)
 	e.videoCodec.SetTimeBase(timeBase)
 
-	// Set framerate
 	framerate := ffmpeg.AVMakeQ(e.config.Framerate, 1)
 	e.videoCodec.SetFramerate(framerate)
 
 	e.videoCodec.SetGopSize(e.config.Framerate * 2) // Keyframe every 2 seconds
 
-	// Set stream timebase
 	e.videoStream.SetTimeBase(timeBase)
 
-	// Set encoding options based on encoder type
 	var opts *ffmpeg.AVDictionary
 	defer ffmpeg.AVDictFree(&opts)
 
@@ -326,19 +316,16 @@ func (e *Encoder) Initialize() (err error) {
 		_, _ = ffmpeg.AVDictSet(&opts, ffmpeg.ToCStr("subme"), ffmpeg.ToCStr("4"), 0)
 	}
 
-	// Open codec with options
 	ret, err = ffmpeg.AVCodecOpen2(e.videoCodec, codec, &opts)
 	if err := checkFFmpeg(ret, err, "open codec"); err != nil {
 		return err
 	}
 
-	// Copy codec parameters to stream
 	ret, err = ffmpeg.AVCodecParametersFromContext(e.videoStream.Codecpar(), e.videoCodec)
 	if err := checkFFmpeg(ret, err, "copy codec parameters"); err != nil {
 		return err
 	}
 
-	// Open output file
 	var pb *ffmpeg.AVIOContext
 	ret, err = ffmpeg.AVIOOpen(&pb, outputPath, ffmpeg.AVIOFlagWrite)
 	if err := checkFFmpeg(ret, err, "open output file"); err != nil {
@@ -346,14 +333,12 @@ func (e *Encoder) Initialize() (err error) {
 	}
 	e.formatCtx.SetPb(pb)
 
-	// Initialize audio encoder if sample rate is provided
 	if e.config.SampleRate > 0 {
 		if err := e.initializeAudioEncoder(); err != nil {
 			return fmt.Errorf("failed to initialize audio encoder: %w", err)
 		}
 	}
 
-	// Write file header
 	ret, err = ffmpeg.AVFormatWriteHeader(e.formatCtx, nil)
 	if err := checkFFmpeg(ret, err, "write header"); err != nil {
 		return err
@@ -600,7 +585,6 @@ func (e *Encoder) outputChannels() int {
 // Samples are provided via WriteAudioSamples().
 // Requires SampleRate to be set in Config.
 func (e *Encoder) initializeAudioEncoder() error {
-	// Set up AAC encoder for output
 	audioEncoder := ffmpeg.AVCodecFindEncoder(ffmpeg.AVCodecIdAac)
 	if audioEncoder == nil {
 		return fmt.Errorf("AAC encoder not found")
@@ -621,10 +605,7 @@ func (e *Encoder) initializeAudioEncoder() error {
 	e.audioCodec.SetSampleFmt(ffmpeg.AVSampleFmtFltp) // AAC requires float planar
 	e.audioCodec.SetSampleRate(e.config.SampleRate)
 
-	// Set channel configuration based on config (default mono)
 	outputChannels := e.outputChannels()
-
-	// Set channel layout using FFmpeg 8.0 API
 	ffmpeg.AVChannelLayoutDefault(e.audioCodec.ChLayout(), outputChannels)
 
 	e.audioCodec.SetBitRate(192000) // 192 kbps
@@ -640,18 +621,15 @@ func (e *Encoder) initializeAudioEncoder() error {
 		return err
 	}
 
-	// Allocate encoder frame only (no decoder needed)
 	e.audioEncFrame = ffmpeg.AVFrameAlloc()
 	if e.audioEncFrame == nil {
 		return fmt.Errorf("failed to allocate audio encoder frame")
 	}
 
-	// Initialize audio FIFO with pooled allocation for the configured frame size
-	// Frame size = encoder frame size (1024 for AAC) × number of channels
+	// FIFO frame size = encoder frame size (1024 for AAC) × channel count.
 	samplesPerFrame := e.audioCodec.FrameSize() * outputChannels
 	e.audioFIFO = NewAudioFIFO(samplesPerFrame)
 
-	// Configure encoder frame with correct size
 	e.audioEncFrame.SetNbSamples(e.audioCodec.FrameSize())
 	e.audioEncFrame.SetFormat(int(ffmpeg.AVSampleFmtFltp))
 	ffmpeg.AVChannelLayoutDefault(e.audioEncFrame.ChLayout(), outputChannels)
@@ -884,19 +862,17 @@ func (e *Encoder) WriteAudioSamples(samples []float32) error {
 		return nil // No audio configured
 	}
 
-	encoderFrameSize := e.audioCodec.FrameSize() // Should be 1024 for AAC
+	encoderFrameSize := e.audioCodec.FrameSize() // 1024 for AAC
 	outputChannels := e.outputChannels()
 
-	// Push samples to FIFO
 	e.audioFIFO.Push(samples)
 
-	// Process all complete frames in FIFO
+	// Drain the FIFO one encoder frame at a time.
 	samplesPerFrame := e.audioFIFO.FrameSize()
 	for e.audioFIFO.Available() >= samplesPerFrame {
-		// Pop exactly one encoder frame worth of samples (pooled for AAC sizes)
+		// Pooled for AAC-sized frames.
 		frameSamples := e.audioFIFO.Pop(samplesPerFrame)
 
-		// Make frame writable and write samples
 		_, _ = ffmpeg.AVFrameMakeWritable(e.audioEncFrame)
 
 		var writeErr error
@@ -906,7 +882,7 @@ func (e *Encoder) WriteAudioSamples(samples []float32) error {
 			writeErr = writeMonoFloats(e.audioEncFrame, frameSamples)
 		}
 
-		// Return slice to pool after use (safe for non-pooled slices)
+		// Safe for non-pooled slices.
 		e.audioFIFO.ReturnSlice(frameSamples)
 
 		if writeErr != nil {
@@ -914,17 +890,14 @@ func (e *Encoder) WriteAudioSamples(samples []float32) error {
 				channelLayoutName(outputChannels), writeErr)
 		}
 
-		// Set PTS
 		e.audioEncFrame.SetPts(e.nextAudioPts)
 		e.nextAudioPts += int64(encoderFrameSize)
 
-		// Send to encoder
 		ret, err := ffmpeg.AVCodecSendFrame(e.audioCodec, e.audioEncFrame)
 		if err := checkFFmpeg(ret, err, "send audio frame to encoder"); err != nil {
 			return err
 		}
 
-		// Receive and write encoded packets
 		if err := e.receiveAndWriteAudioPackets(); err != nil {
 			return err
 		}
@@ -943,15 +916,13 @@ func (e *Encoder) FlushAudioEncoder() error {
 	encoderFrameSize := e.audioCodec.FrameSize()
 	outputChannels := e.outputChannels()
 
-	// Process any remaining samples in FIFO (may be partial frame)
+	// A final partial frame is zero-padded to a full encoder frame.
 	samplesPerFrame := e.audioFIFO.FrameSize()
 	remaining := e.audioFIFO.Available()
 	if remaining > 0 {
-		// Pad with zeros to make a complete frame
 		frameSamples := make([]float32, samplesPerFrame)
 		partialSamples := e.audioFIFO.Pop(remaining)
 		copy(frameSamples, partialSamples)
-		// Return partial slice to pool (safe even for non-pooled sizes)
 		e.audioFIFO.ReturnSlice(partialSamples)
 
 		_, _ = ffmpeg.AVFrameMakeWritable(e.audioEncFrame)
@@ -976,70 +947,55 @@ func (e *Encoder) FlushAudioEncoder() error {
 		}
 	}
 
-	// Flush encoder by sending NULL frame
+	// Send a NULL frame to enter draining mode.
 	_, _ = ffmpeg.AVCodecSendFrame(e.audioCodec, nil)
 
-	// Receive and write all remaining packets
 	return e.receiveAndWriteAudioPackets()
 }
 
-// writeMonoFloats writes mono float samples to an encoder frame
+// writeMonoFloats writes mono float samples to a planar encoder frame.
 func writeMonoFloats(frame *ffmpeg.AVFrame, samples []float32) error {
 	nbSamples := len(samples)
 
-	// Get pointer for mono channel (planar format)
 	dataPtr := frame.Data().Get(0)
-
 	if dataPtr == nil {
 		return fmt.Errorf("frame data pointer not allocated")
 	}
 
-	// Convert to byte slice for writing
 	data := unsafe.Slice((*byte)(dataPtr), nbSamples*4)
 
-	// Write samples to channel
 	for i := range nbSamples {
-		// Write channel - direct float32 byte copy
-		sampleFloat := samples[i]
-		binary.LittleEndian.PutUint32(data[i*4:(i+1)*4], math.Float32bits(sampleFloat))
+		binary.LittleEndian.PutUint32(data[i*4:(i+1)*4], math.Float32bits(samples[i]))
 	}
 
 	return nil
 }
 
-// writeStereoFloats writes stereo float samples to an encoder frame
+// writeStereoFloats writes interleaved stereo float samples to a planar encoder
+// frame, splitting them into the left and right channel planes.
 func writeStereoFloats(frame *ffmpeg.AVFrame, samples []float32) error {
-	nbSamples := len(samples) / 2 // stereo has 2 channels
+	nbSamples := len(samples) / 2
 
-	// Get pointers for both channels (planar format) using .Get() method
 	leftPtr := frame.Data().Get(0)
 	rightPtr := frame.Data().Get(1)
-
 	if leftPtr == nil || rightPtr == nil {
 		return fmt.Errorf("frame data pointers not allocated")
 	}
 
-	// Convert to byte slices for writing
 	leftData := unsafe.Slice((*byte)(leftPtr), nbSamples*4)
 	rightData := unsafe.Slice((*byte)(rightPtr), nbSamples*4)
 
-	// Write samples to both channels
 	for i := range nbSamples {
-		// Write left channel - direct float32 byte copy
-		leftFloat := samples[i*2]
-		binary.LittleEndian.PutUint32(leftData[i*4:(i+1)*4], math.Float32bits(leftFloat))
-
-		// Write right channel - direct float32 byte copy
-		rightFloat := samples[i*2+1]
-		binary.LittleEndian.PutUint32(rightData[i*4:(i+1)*4], math.Float32bits(rightFloat))
+		binary.LittleEndian.PutUint32(leftData[i*4:(i+1)*4], math.Float32bits(samples[i*2]))
+		binary.LittleEndian.PutUint32(rightData[i*4:(i+1)*4], math.Float32bits(samples[i*2+1]))
 	}
 
 	return nil
 }
 
-// Close finalizes the output file and frees resources
+// Close finalizes the output file and frees resources.
 func (e *Encoder) Close() error {
-	// Flush encoder
+	// Flush the video encoder before writing the trailer.
 	if e.videoCodec != nil && e.pkt != nil {
 		_, _ = ffmpeg.AVCodecSendFrame(e.videoCodec, nil)
 
@@ -1061,17 +1017,14 @@ func (e *Encoder) Close() error {
 		}
 	}
 
-	// Write trailer
 	if e.formatCtx != nil {
 		_, _ = ffmpeg.AVWriteTrailer(e.formatCtx)
 
-		// Close output file
 		if e.formatCtx.Pb() != nil {
 			ffmpeg.AVIOClose(e.formatCtx.Pb())
 		}
 	}
 
-	// Free codec contexts
 	if e.videoCodec != nil {
 		ffmpeg.AVCodecFreeContext(&e.videoCodec)
 	}
@@ -1079,53 +1032,44 @@ func (e *Encoder) Close() error {
 		ffmpeg.AVCodecFreeContext(&e.audioCodec)
 	}
 
-	// Free audio resources
 	if e.audioEncFrame != nil {
 		ffmpeg.AVFrameFree(&e.audioEncFrame)
 	}
 
-	// Free hardware device context
 	if e.hwDeviceCtx != nil {
 		ffmpeg.AVBufferUnref(&e.hwDeviceCtx)
 		e.hwDeviceCtx = nil
 	}
 
-	// Free Vulkan-specific resources
 	if e.hwFramesCtx != nil {
 		ffmpeg.AVBufferUnref(&e.hwFramesCtx)
 		e.hwFramesCtx = nil
 	}
-	// Free pre-allocated Vulkan NV12 frame
 	if e.hwNV12Frame != nil {
 		ffmpeg.AVFrameFree(&e.hwNV12Frame)
 		e.hwNV12Frame = nil
 	}
 
-	// Free pre-allocated software YUV420P frame
 	if e.swYUVFrame != nil {
 		ffmpeg.AVFrameFree(&e.swYUVFrame)
 		e.swYUVFrame = nil
 	}
 
-	// Free pre-allocated NVENC RGBA frame
 	if e.rgbaFrame != nil {
 		ffmpeg.AVFrameFree(&e.rgbaFrame)
 		e.rgbaFrame = nil
 	}
 
-	// Free pre-allocated reusable video packet
 	if e.pkt != nil {
 		ffmpeg.AVPacketFree(&e.pkt)
 		e.pkt = nil
 	}
 
-	// Stop the RGB→YUV worker pool
 	if e.rowPool != nil {
 		e.rowPool.Close()
 		e.rowPool = nil
 	}
 
-	// Free format context
 	if e.formatCtx != nil {
 		ffmpeg.AVFormatFreeContext(e.formatCtx)
 		e.formatCtx = nil

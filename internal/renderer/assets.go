@@ -43,10 +43,9 @@ func LoadBackgroundImage(runtimeConfig *config.RuntimeConfig) (*image.RGBA, erro
 		return nil, err
 	}
 
-	// Convert to RGBA with proper scaling
 	rgba := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
 
-	// Use the fastest pure Go implementation according to speedtest-resize benchmarks
+	// ApproxBiLinear is the fastest pure-Go scaler per speedtest-resize benchmarks.
 	draw.ApproxBiLinear.Scale(rgba, rgba.Bounds(), img, img.Bounds(), draw.Over, nil)
 
 	return rgba, nil
@@ -77,14 +76,12 @@ func LoadFont(size float64) (font.Face, error) {
 func DrawCenterText(img *image.RGBA, face font.Face, text string, centerY int, textColor color.RGBA) {
 	d := newTextDrawer(img, face, textColor)
 
-	// Measure text dimensions
 	bounds, _ := d.BoundString(text)
 	textWidth := (bounds.Max.X - bounds.Min.X).Ceil()
 	textHeight := (bounds.Max.Y - bounds.Min.Y).Ceil()
 
-	// Calculate centered position (both horizontally and vertically)
-	// Font baseline positioning means the Y coordinate is where the baseline sits.
-	// To visually center text, we position baseline slightly below center.
+	// DrawString places the baseline at y, so offset below centre to visually
+	// centre the glyph block.
 	x := (config.Width - textWidth) / 2
 	y := centerY + (textHeight / 3)
 
@@ -96,12 +93,11 @@ func DrawCenterText(img *image.RGBA, face font.Face, text string, centerY int, t
 func DrawEpisodeNumber(img *image.RGBA, face font.Face, episodeNum string, textColor color.RGBA) {
 	d := newTextDrawer(img, face, textColor)
 
-	// Measure text dimensions
 	bounds, _ := d.BoundString(episodeNum)
 	textWidth := (bounds.Max.X - bounds.Min.X).Ceil()
 	textHeight := (bounds.Max.Y - bounds.Min.Y).Ceil()
 
-	// Position in top right corner, inset 30px from the edges
+	// Top-right corner, inset 30px from the edges.
 	offset := 30
 	x := config.Width - textWidth - offset
 	y := textHeight + offset

@@ -19,7 +19,6 @@ func mustAnalyze(t *testing.T) *Profile {
 func TestAnalyzeAudio(t *testing.T) {
 	profile := mustAnalyze(t)
 
-	// Validate basic properties
 	if profile.NumFrames <= 0 {
 		t.Errorf("Expected positive number of frames, got %d", profile.NumFrames)
 	}
@@ -32,7 +31,6 @@ func TestAnalyzeAudio(t *testing.T) {
 		t.Errorf("Expected positive duration, got %.2f", profile.Duration)
 	}
 
-	// Validate global statistics
 	if profile.GlobalPeak <= 0 {
 		t.Errorf("Expected positive GlobalPeak, got %.6f", profile.GlobalPeak)
 	}
@@ -45,7 +43,6 @@ func TestAnalyzeAudio(t *testing.T) {
 		t.Errorf("Expected positive DynamicRange, got %.2f", profile.DynamicRange)
 	}
 
-	// Validate optimal baseScale
 	if profile.OptimalBaseScale <= 0 {
 		t.Errorf("Expected positive OptimalBaseScale, got %.6f", profile.OptimalBaseScale)
 	}
@@ -105,21 +102,17 @@ func TestDynamicRangeCalculation(t *testing.T) {
 }
 
 func TestAnalyzeFrameDirectly(t *testing.T) {
-	// Create a simple test signal
+	// 440 Hz sine wave at 0.5 amplitude.
 	testSamples := make([]float64, config.FFTSize)
 	for i := range testSamples {
-		// Simple sine wave
 		testSamples[i] = 0.5 * math.Sin(2*math.Pi*440*float64(i)/float64(config.SampleRate))
 	}
 
-	// Process through FFT
 	processor := NewProcessor()
 	coeffs := processor.ProcessChunk(testSamples)
 
-	// Analyze
 	analysis := analyzeFrame(coeffs, testSamples, nil)
 
-	// Validate results
 	if analysis.PeakMagnitude <= 0 {
 		t.Errorf("Expected positive PeakMagnitude, got %.6f", analysis.PeakMagnitude)
 	}

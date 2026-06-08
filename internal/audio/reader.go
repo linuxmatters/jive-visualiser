@@ -38,7 +38,6 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 		sampleBuffer: make([]float64, 0, 8192),
 	}
 
-	// Open input file and find audio stream
 	formatCtx, streamIndex, err := openAudioFormatCtx(filename)
 	if err != nil {
 		return nil, err
@@ -48,21 +47,18 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 
 	audioStream := d.formatCtx.Streams().Get(uintptr(d.streamIndex)) //nolint:gosec // stream index is non-negative
 
-	// Find decoder
 	decoder := ffmpeg.AVCodecFindDecoder(audioStream.Codecpar().CodecId())
 	if decoder == nil {
 		d.Close()
 		return nil, fmt.Errorf("audio decoder not found for codec ID %d", audioStream.Codecpar().CodecId())
 	}
 
-	// Allocate codec context
 	d.codecCtx = ffmpeg.AVCodecAllocContext3(decoder)
 	if d.codecCtx == nil {
 		d.Close()
 		return nil, fmt.Errorf("failed to allocate codec context")
 	}
 
-	// Copy codec parameters
 	ret, err := ffmpeg.AVCodecParametersToContext(d.codecCtx, audioStream.Codecpar())
 	if err != nil {
 		d.Close()
@@ -73,7 +69,6 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 		return nil, fmt.Errorf("failed to copy codec parameters: error code %d", ret)
 	}
 
-	// Open codec
 	ret, err = ffmpeg.AVCodecOpen2(d.codecCtx, decoder, nil)
 	if err != nil {
 		d.Close()
@@ -84,7 +79,6 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 		return nil, fmt.Errorf("failed to open codec: error code %d", ret)
 	}
 
-	// Store audio properties
 	d.sampleRate = d.codecCtx.SampleRate()
 	d.channels = d.codecCtx.ChLayout().NbChannels()
 
@@ -95,7 +89,6 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 		return nil, fmt.Errorf("unsupported channel count: %d", d.channels)
 	}
 
-	// Validate format support
 	sampleFmt := d.codecCtx.SampleFmt()
 	supportedFormats := map[ffmpeg.AVSampleFormat]bool{
 		ffmpeg.AVSampleFmtS16:  true, // 16-bit signed interleaved
@@ -110,7 +103,6 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 		return nil, fmt.Errorf("unsupported sample format: %d", sampleFmt)
 	}
 
-	// Allocate packet and frame
 	d.packet = ffmpeg.AVPacketAlloc()
 	if d.packet == nil {
 		d.Close()
@@ -146,16 +138,15 @@ func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
 func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 	numSamples := len(dst)
 
-	// First, try to satisfy request from buffer
+	// Satisfy from the buffer when possible.
 	if len(d.sampleBuffer) >= numSamples {
 		copy(dst, d.sampleBuffer[:numSamples])
 		d.sampleBuffer = d.sampleBuffer[numSamples:]
 		return numSamples, nil
 	}
 
-	// Need to decode more samples
+	// Decode more packets until the buffer holds enough samples.
 	for len(d.sampleBuffer) < numSamples {
-		// Read packet
 		ret, err := ffmpeg.AVReadFrame(d.formatCtx, d.packet)
 		if err != nil {
 			if errors.Is(err, ffmpeg.AVErrorEOF) {
@@ -181,20 +172,17 @@ func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 			return 0, fmt.Errorf("failed to read packet: error code %d", ret)
 		}
 
-		// Skip non-audio packets
 		if d.packet.StreamIndex() != d.streamIndex {
 			ffmpeg.AVPacketUnref(d.packet)
 			continue
 		}
 
-		// Send packet to decoder
 		_, err = ffmpeg.AVCodecSendPacket(d.codecCtx, d.packet)
 		ffmpeg.AVPacketUnref(d.packet)
 		if err != nil {
 			return 0, fmt.Errorf("failed to send packet to decoder: %w", err)
 		}
 
-		// Receive decoded frames
 		for {
 			_, err = ffmpeg.AVCodecReceiveFrame(d.codecCtx, d.frame)
 			if err != nil {
@@ -204,7 +192,6 @@ func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 				return 0, fmt.Errorf("failed to receive frame: %w", err)
 			}
 
-			// Decode samples directly into the buffer tail
 			if err := d.extractSamples(); err != nil {
 				return 0, fmt.Errorf("failed to extract samples: %w", err)
 			}
@@ -213,7 +200,6 @@ func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 		}
 	}
 
-	// Copy requested samples from buffer
 	copy(dst, d.sampleBuffer[:numSamples])
 	d.sampleBuffer = d.sampleBuffer[numSamples:]
 	return numSamples, nil

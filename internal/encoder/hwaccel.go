@@ -114,7 +114,6 @@ func testEncoderAvailable(encoderName string, deviceType ffmpeg.AVHWDeviceType, 
 	restoreLogging := suppressHWProbeLogging()
 	defer restoreLogging()
 
-	// Find the encoder
 	encName := ffmpeg.ToCStr(encoderName)
 	defer encName.Free()
 	codec := ffmpeg.AVCodecFindEncoderByName(encName)
@@ -122,7 +121,6 @@ func testEncoderAvailable(encoderName string, deviceType ffmpeg.AVHWDeviceType, 
 		return false
 	}
 
-	// Create hardware device context
 	var hwDeviceCtx *ffmpeg.AVBufferRef
 	ret, _ := ffmpeg.AVHWDeviceCtxCreate(&hwDeviceCtx, deviceType, nil, nil, 0)
 	if ret < 0 || hwDeviceCtx == nil {
@@ -130,7 +128,6 @@ func testEncoderAvailable(encoderName string, deviceType ffmpeg.AVHWDeviceType, 
 	}
 	defer ffmpeg.AVBufferUnref(&hwDeviceCtx)
 
-	// Create codec context
 	codecCtx := ffmpeg.AVCodecAllocContext3(codec)
 	if codecCtx == nil {
 		return false
