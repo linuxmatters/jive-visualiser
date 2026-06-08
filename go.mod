@@ -7,7 +7,6 @@ require (
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/alecthomas/kong v1.15.0
-	github.com/argusdusty/gofft v1.2.1
 	github.com/charmbracelet/harmonica v0.2.0
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0
 	github.com/linuxmatters/ffmpeg-statigo v0.0.0-00010101000000-000000000000

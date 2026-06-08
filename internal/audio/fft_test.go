@@ -38,7 +38,10 @@ func TestBinFFT_KnownSineWave(t *testing.T) {
 	windowSamples := sine[:fftSize]
 
 	// Process through the live code path (Hanning window + FFT)
-	processor := NewProcessor()
+	processor, err := NewProcessor()
+	if err != nil {
+		t.Fatal(err)
+	}
 	fftInput := processor.ProcessChunk(windowSamples)
 
 	// Bin the FFT results into 64 bars
@@ -110,8 +113,9 @@ func TestBinFFT_Silence(t *testing.T) {
 		baseScale   = 1.0
 	)
 
-	// Create silence (all zeros)
-	silence := make([]complex128, fftSize)
+	// Create silence: a zero spectrum of the correct interleaved length
+	// (re/im pairs for the N/2+1 bins).
+	silence := make(Spectrum, 2*(fftSize/2+1))
 
 	result := make([]float64, numBars)
 	BinFFT(silence, sensitivity, baseScale, result)
@@ -158,7 +162,10 @@ func TestBinFFT_NoiseGate(t *testing.T) {
 	}
 
 	// Process through the live code path (Hanning window + FFT)
-	processor := NewProcessor()
+	processor, err := NewProcessor()
+	if err != nil {
+		t.Fatal(err)
+	}
 	fftInput := processor.ProcessChunk(quietSignal)
 
 	result := make([]float64, numBars)
@@ -198,7 +205,10 @@ func TestBinFFT_EnergyDistribution(t *testing.T) {
 	}
 
 	// Process through the live code path (Hanning window + FFT)
-	processor := NewProcessor()
+	processor, err := NewProcessor()
+	if err != nil {
+		t.Fatal(err)
+	}
 	fftInput := processor.ProcessChunk(signal)
 
 	result := make([]float64, numBars)
@@ -228,6 +238,109 @@ func TestBinFFT_EnergyDistribution(t *testing.T) {
 	}
 
 	t.Logf("Energy distribution: %.6f total energy across %d/%d bars", totalEnergy, nonzeroCount, numBars)
+}
+
+// absf returns the absolute value of a float32 (mirrors tx_test.go:96-101). Kept
+// local; test helpers do not cross the module boundary.
+func absf(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// TestAVTxRDFTForwardDC mirrors the DC semantics of ffmpeg-statigo's
+// TestAVTxFloatFFTForwardDC (tx_test.go:26-93) but at the Processor/ProcessChunk
+// level, exercising the live av_tx RDFT path end to end. A constant (DC) real
+// input is fed through ProcessChunk and the DC bin (Spectrum index 0, i.e.
+// spectrum[0]/spectrum[1] re/im) must hold essentially all the energy while the
+// rest of the spectrum is near zero.
+//
+// DC-assertion strategy: RELATIVE dominance with a windowed absolute DC check.
+// ProcessChunk applies a Hanning window before the transform, so the transformed
+// input is V*w[i], not a flat constant. A pure constant therefore does NOT yield
+// a clean N*V DC spike: the DC bin equals V*sum(w) and the window's narrow
+// spectral leakage spills into the first few bins. We:
+//   - assert the DC bin re == V*sum(hanning) within tol and im ~ 0 (absolute,
+//     factoring in the window sum), and
+//   - assert the DC magnitude dominates every other bin by a large margin
+//     (relative), with all bins past the window's leakage neighbourhood near zero
+//     relative to DC.
+//
+// This genuinely drives av_tx: a constant non-zero input cannot produce a large,
+// dominant DC bin unless the transform actually ran (a bypassed/zeroed transform
+// fails the DC magnitude assertions).
+func TestAVTxRDFTForwardDC(t *testing.T) {
+	const (
+		fftSize = 2048
+		realVal = 1.5
+		tol     = float32(1e-4)
+	)
+
+	processor, err := NewProcessor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer processor.Close()
+
+	// Constant (DC) real input.
+	input := make([]float64, fftSize)
+	for i := range input {
+		input[i] = realVal
+	}
+
+	spectrum := processor.ProcessChunk(input)
+
+	// Expected DC bin: re = V * sum(hanning), im ~ 0. The Processor windows the
+	// input, so factor the window sum into the absolute DC check.
+	var windowSum float64
+	n := float64(fftSize - 1)
+	for i := range fftSize {
+		windowSum += 0.5 * (1 - math.Cos(2*math.Pi*float64(i)/n))
+	}
+	wantDC := float32(realVal * windowSum)
+
+	dcRe := spectrum[0]
+	dcIm := spectrum[1]
+	if absf(dcRe-wantDC) > tol || absf(dcIm) > tol {
+		t.Fatalf("DC bin = (%g, %g), want (%g, 0) within %g", dcRe, dcIm, wantDC, tol)
+	}
+
+	dcMag := float32(math.Hypot(float64(dcRe), float64(dcIm)))
+	if dcMag <= tol {
+		t.Fatalf("DC magnitude %g not above tolerance; transform appears bypassed", dcMag)
+	}
+
+	// Relative dominance. The Hanning window's spectrum is DC plus two
+	// half-amplitude sidebands at bins ±1 (here bins 1 and 2), so those carry
+	// ~DC/2 and the rest of the spectrum is essentially zero. We therefore require:
+	//   - DC dominates every individual bin (DC > each other bin magnitude), and
+	//   - bins past the window's leakage neighbourhood vanish relative to DC.
+	const leakageBins = 3
+	numBins := fftSize/2 + 1
+	var maxOther, maxOuter float32
+	for i := 1; i < numBins; i++ {
+		re := spectrum[2*i]
+		im := spectrum[2*i+1]
+		mag := float32(math.Hypot(float64(re), float64(im)))
+		if mag > maxOther {
+			maxOther = mag
+		}
+		if i >= leakageBins && mag > maxOuter {
+			maxOuter = mag
+		}
+	}
+
+	if dcMag <= maxOther {
+		t.Fatalf("DC magnitude %g does not dominate largest other bin %g", dcMag, maxOther)
+	}
+	if maxOuter/dcMag > 1e-3 {
+		t.Fatalf("bins beyond leakage neighbourhood not vanishing: max %g is %g of DC %g",
+			maxOuter, maxOuter/dcMag, dcMag)
+	}
+
+	t.Logf("DC bin = (%g, %g), wantDC = %g; DC magnitude %g, largest other bin %g, max bin>=%d %g",
+		dcRe, dcIm, wantDC, dcMag, maxOther, leakageBins, maxOuter)
 }
 
 // TestRearrangeFrequenciesCenterOut_Symmetry verifies that the output array
@@ -386,7 +499,10 @@ func TestRearrangeFrequenciesCenterOut_SmallInput(t *testing.T) {
 // This is the hot path called for every FFT frame during both analysis and render passes.
 func BenchmarkProcessChunk(b *testing.B) {
 	// Create processor with pre-computed Hanning window
-	processor := NewProcessor()
+	processor, err := NewProcessor()
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	// Generate test audio (random-ish data simulating real audio)
 	samples := make([]float64, 2048)

@@ -369,7 +369,13 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		warnings = append(warnings, fmt.Sprintf("could not load embedded font, rendering without centre text: %v", err))
 	}
 
-	processor := audio.NewProcessor()
+	processor, err := audio.NewProcessor()
+	if err != nil {
+		cli.PrintError(fmt.Sprintf("creating FFT processor: %v", err))
+		p.Quit()
+		return
+	}
+	defer processor.Close()
 	frame := renderer.NewFrame(bgImage, fontFace, cfg.meta, cfg.runtimeConfig)
 
 	numFrames := profile.NumFrames
