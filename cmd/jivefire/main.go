@@ -21,9 +21,8 @@ import (
 	"github.com/linuxmatters/jivefire/internal/ui"
 )
 
-// version is set via ldflags at build time
-// Local dev builds: "dev"
-// Release builds: git tag (e.g. "v0.1.0")
+// version is set via ldflags at build time: "dev" for local builds, the git tag
+// (e.g. "v0.1.0") for releases.
 var version = "dev"
 
 var CLI struct {
@@ -52,13 +51,12 @@ func main() {
 		kong.Help(cli.StyledHelpPrinter(kong.HelpOptions{Compact: true})),
 	)
 
-	// Handle version flag
 	if CLI.Version {
 		cli.PrintVersion(version)
 		os.Exit(0)
 	}
 
-	// Handle probe flag - display hardware encoder status
+	// Probe flag: display hardware encoder status, then exit
 	if CLI.Probe {
 		encoders := encoder.DetectHWEncoders()
 		var infos []cli.EncoderInfo
@@ -73,31 +71,27 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Show help if no arguments provided
+	// No arguments: show usage instead of erroring
 	if CLI.Input == "" && CLI.Output == "" {
 		_ = ctx.PrintUsage(true)
 		os.Exit(0)
 	}
 
-	// Validate required arguments
 	if CLI.Input == "" || CLI.Output == "" {
 		cli.PrintError("<input> and <output> are required")
 		os.Exit(1)
 	}
 
-	// Validate input file exists
 	if _, err := os.Stat(CLI.Input); os.IsNotExist(err) {
 		cli.PrintError(fmt.Sprintf("input file does not exist: %s", CLI.Input))
 		os.Exit(1)
 	}
 
-	// Validate channels
 	if CLI.Channels != 1 && CLI.Channels != 2 {
 		cli.PrintError(fmt.Sprintf("invalid channels value: %d (must be 1 or 2)", CLI.Channels))
 		os.Exit(1)
 	}
 
-	// Validate encoder option
 	validEncoders := map[string]encoder.HWAccelType{
 		"auto":     encoder.HWAccelAuto,
 		"nvenc":    encoder.HWAccelNVENC,
@@ -135,10 +129,8 @@ func main() {
 		}
 	}
 
-	// Build runtime config from CLI arguments
 	runtimeConfig := &config.RuntimeConfig{}
 
-	// Parse and validate bar color if provided
 	if CLI.BarColor != "" {
 		r, g, b, err := config.ParseHexColor(CLI.BarColor)
 		if err != nil {
@@ -148,7 +140,6 @@ func main() {
 		runtimeConfig.BarColor = config.OptionalColor{R: r, G: g, B: b, Set: true}
 	}
 
-	// Parse and validate text color if provided
 	if CLI.TextColor != "" {
 		r, g, b, err := config.ParseHexColor(CLI.TextColor)
 		if err != nil {
@@ -158,7 +149,6 @@ func main() {
 		runtimeConfig.TextColor = config.OptionalColor{R: r, G: g, B: b, Set: true}
 	}
 
-	// Validate background image if provided
 	if CLI.BackgroundImage != "" {
 		if _, err := os.Stat(CLI.BackgroundImage); os.IsNotExist(err) {
 			cli.PrintError(fmt.Sprintf("background image does not exist: %s", CLI.BackgroundImage))
@@ -167,7 +157,6 @@ func main() {
 		runtimeConfig.BackgroundImagePath = CLI.BackgroundImage
 	}
 
-	// Validate thumbnail image if provided
 	if CLI.ThumbnailImage != "" {
 		if _, err := os.Stat(CLI.ThumbnailImage); os.IsNotExist(err) {
 			cli.PrintError(fmt.Sprintf("thumbnail image does not exist: %s", CLI.ThumbnailImage))
@@ -188,7 +177,6 @@ func main() {
 }
 
 func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, meta renderer.PodcastMeta) {
-	// Track overall timing from the very start
 	overallStartTime := time.Now()
 
 	thumbnailPath := strings.Replace(outputFile, ".mp4", ".png", 1)
@@ -216,9 +204,8 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 	}
 	estimatedTotalFrames := int(metadata.NumSamples) / samplesPerFrame
 
-	// Create unified Bubbletea program for both passes
-	// Alternate screen buffer (set via View().AltScreen) prevents ghost box
-	// edges when the view height changes between passes
+	// The alternate screen buffer (set via View().AltScreen) prevents ghost box
+	// edges when the view height changes between passes.
 	model := ui.NewModel(noPreview)
 	p := tea.NewProgram(model)
 
@@ -232,10 +219,9 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 		pass1StartTime := time.Now()
 
 		profile, analysisErr = audio.AnalyzeAudio(inputFile, func(frame int, currentRMS, currentPeak float64, barHeights []float64, duration time.Duration) {
-			// Send progress update to unified UI
 			p.Send(ui.AnalysisProgress{
 				Frame:       frame,
-				TotalFrames: estimatedTotalFrames, // Use pre-calculated estimate
+				TotalFrames: estimatedTotalFrames,
 				CurrentRMS:  currentRMS,
 				CurrentPeak: currentPeak,
 				BarHeights:  barHeights,
@@ -274,7 +260,6 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 		})
 	}()
 
-	// Run the unified Bubbletea UI (uses alternate screen buffer)
 	finalModel, err := p.Run()
 	if err != nil {
 		cli.PrintError(fmt.Sprintf("running UI: %v", err))
@@ -330,7 +315,6 @@ func expandMonoToStereo(dst []float32, src []float64, n int) {
 // message so the caller can print them after the Bubbletea alt screen exits.
 func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	var warnings []string
-	// Open streaming reader for Pass 2
 	reader, err := audio.NewStreamingReader(cfg.inputFile)
 	if err != nil {
 		cli.PrintError(fmt.Sprintf("opening audio stream: %v", err))
@@ -339,15 +323,14 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	}
 	defer reader.Close()
 
-	// Initialise encoder with video and audio (using new sample-based API)
 	enc, err := encoder.New(encoder.Config{
 		OutputPath:    cfg.outputFile,
 		Width:         config.Width,
 		Height:        config.Height,
 		Framerate:     config.FPS,
-		SampleRate:    reader.SampleRate(), // Use sample rate from audio file
-		AudioChannels: cfg.channels,        // Mono (1) or stereo (2)
-		HWAccel:       cfg.hwAccel,         // Hardware acceleration type
+		SampleRate:    reader.SampleRate(),
+		AudioChannels: cfg.channels,
+		HWAccel:       cfg.hwAccel,
 	})
 	if err != nil {
 		cli.PrintError(fmt.Sprintf("creating encoder: %v", err))
@@ -355,8 +338,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		return
 	}
 
-	err = enc.Initialize()
-	if err != nil {
+	if err = enc.Initialize(); err != nil {
 		cli.PrintError(fmt.Sprintf("initialising encoder: %v", err))
 		p.Quit()
 		return
@@ -387,22 +369,18 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		warnings = append(warnings, fmt.Sprintf("could not load embedded font, rendering without centre text: %v", err))
 	}
 
-	// Create audio processor and frame renderer
 	processor := audio.NewProcessor()
 	frame := renderer.NewFrame(bgImage, fontFace, cfg.meta, cfg.runtimeConfig)
 
-	// Calculate frames from profile
 	numFrames := profile.NumFrames
 
-	// Profiling variables
 	var totalVis, totalEncode, totalAudio time.Duration
 	renderStartTime := time.Now()
 	lastProgressUpdate := renderStartTime
 	const progressUpdateInterval = 30 * time.Millisecond
 
-	// Get audio format information for codec display
+	// Codec display uses the output channel count (from CLI), not the input's.
 	audioSampleRate := reader.SampleRate()
-	// Use output channel count (from CLI), not input channel count
 	audioChannelStr := "mono"
 	if cfg.channels == 2 {
 		audioChannelStr = "stereo"
@@ -433,12 +411,11 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	harmonicaPos := make([]float64, config.NumBars)
 	harmonicaVel := make([]float64, config.NumBars)
 
-	// Pre-allocate reusable buffers to avoid allocations in render loop
+	// Reusable buffers to avoid per-frame allocations in the render loop.
 	barHeights := make([]float64, config.NumBars)
 	rearrangedHeights := make([]float64, config.NumBars)
 	barHeightsCopy := make([]float64, config.NumBars) // For UI updates
 
-	// Auto-sensitivity adjustment
 	sensitivity := 1.0
 
 	// Sliding buffer for FFT: we read samplesPerFrame but need FFTSize for FFT.
@@ -502,32 +479,29 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		// === VISUALISATION TIMING START ===
 		t0 := time.Now()
 
-		// Compute FFT
 		coeffs := processor.ProcessChunk(chunk)
 
-		// Compute magnitudes and bin into bars using optimal baseScale from Pass 1
+		// Bin magnitudes into bars using the optimal baseScale from Pass 1.
 		audio.BinFFT(coeffs, sensitivity, profile.OptimalBaseScale, barHeights)
 
-		// Auto-sensitivity with soft knee compression
+		// Auto-sensitivity: detect overshoot, applying soft-knee compression to any
+		// bar above the threshold.
 		overshootDetected := false
 
 		for i, h := range barHeights {
 			if h > config.OvershootThreshold {
 				overshootDetected = true
-				// Apply soft knee compression
 				overshoot := h - config.OvershootThreshold
 				barHeights[i] = config.OvershootThreshold + overshoot*math.Exp(-overshoot/config.OvershootThreshold)
 			}
 		}
 
-		// Adjust sensitivity
 		if overshootDetected {
 			sensitivity *= config.SensitivityDecay
 		} else {
 			sensitivity *= config.SensitivityGrowth
 		}
 
-		// Clamp sensitivity
 		if sensitivity < config.SensitivityMin {
 			sensitivity = config.SensitivityMin
 		}
@@ -535,7 +509,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 			sensitivity = config.SensitivityMax
 		}
 
-		// Scale to pixel space
+		// Scale normalised bar heights into pixel space.
 		actualAvailableSpace := float64(config.Height/2 - config.CenterGap/2)
 		availableHeight := actualAvailableSpace * config.MaxBarHeight
 		for i := range barHeights {
@@ -575,10 +549,8 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 			prevBarHeights[i] = heldHeight
 		}
 
-		// Rearrange frequencies for center-out distribution
 		audio.RearrangeFrequenciesCenterOut(prevBarHeights, rearrangedHeights)
 
-		// Generate frame image
 		frame.Draw(rearrangedHeights)
 		totalVis += time.Since(t0)
 		// === VISUALISATION TIMING END ===
@@ -594,22 +566,19 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		totalEncode += time.Since(t0)
 		// === VIDEO ENCODING TIMING END ===
 
-		// Time-based UI updates (10Hz) - minimal overhead, not timed
+		// Throttled UI updates, outside the timed sections.
 		if time.Since(lastProgressUpdate) >= progressUpdateInterval {
 			lastProgressUpdate = time.Now()
 			elapsed := time.Since(renderStartTime)
 
-			// Copy bar heights for UI (use rearranged for better visual)
-			// Uses pre-allocated barHeightsCopy buffer
 			copy(barHeightsCopy, rearrangedHeights)
 
-			// Get actual file size from disk (not an estimate)
+			// Actual on-disk file size, not an estimate.
 			var currentFileSize int64
 			if fileInfo, err := os.Stat(cfg.outputFile); err == nil {
 				currentFileSize = fileInfo.Size()
 			}
 
-			// Include frame data for preview (skip if disabled)
 			var frameData *image.RGBA
 			if !cfg.noPreview {
 				frameData = img
@@ -629,11 +598,10 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 			})
 		}
 
-		// Advance to next frame
 		frameNum++
 
 		// === AUDIO TIMING START ===
-		// Read audio, encode, and manage buffer for next frame
+		// Read audio, encode, and shift the FFT buffer ready for the next frame.
 		t0 = time.Now()
 		nRead, readErr := audio.ReadNextFrame(reader, newSamples)
 		if readErr != nil {
@@ -646,9 +614,8 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 			return
 		}
 
-		// Write audio samples for this frame to encoder
-		// Convert float64 samples to float32 for AAC encoder
-		// Uses pre-allocated buffers, sliced to actual length. For stereo the
+		// Convert this frame's float64 samples to float32 for the AAC encoder via
+		// the pre-allocated buffers, sliced to the actual length. For stereo the
 		// mono signal is duplicated into both interleaved channels.
 		var writeErr error
 		if stereo {
@@ -665,12 +632,11 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 			p.Quit()
 			return
 		}
-		// Shift buffer left by samplesPerFrame, append new samples
+		// Shift the buffer left by samplesPerFrame and append the new samples,
+		// zero-padding a short final read so stale samples never feed the FFT.
 		copy(fftBuffer, fftBuffer[samplesPerFrame:])
-		// Pad with zeros if we got fewer samples than expected
 		if nRead < samplesPerFrame {
 			copy(fftBuffer[config.FFTSize-samplesPerFrame:], newSamples[:nRead])
-			// Zero-fill the remaining space
 			clear(fftBuffer[config.FFTSize-samplesPerFrame+nRead:])
 		} else {
 			copy(fftBuffer[config.FFTSize-samplesPerFrame:], newSamples[:nRead])
@@ -679,35 +645,29 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		// === AUDIO TIMING END ===
 	}
 
-	// Flush any remaining audio after all video frames are written
-	// This encodes any samples remaining in the FIFO and flushes the encoder
+	// Flush samples still in the FIFO after the last video frame is written.
 	if err := enc.FlushAudioEncoder(); err != nil {
 		cli.PrintError(fmt.Sprintf("error flushing audio: %v", err))
 		p.Quit()
 		return
 	}
 
-	// Finalise encoding
 	if err := enc.Close(); err != nil {
 		cli.PrintError(fmt.Sprintf("error closing encoder: %v", err))
 		p.Quit()
 		return
 	}
 
-	// Get actual file size
 	fileInfo, err := os.Stat(cfg.outputFile)
 	var actualFileSize int64
 	if err == nil {
 		actualFileSize = fileInfo.Size()
 	}
 
-	// Calculate samples processed (sample rate * duration)
 	samplesProcessed := int64(profile.SampleRate) * int64(profile.Duration)
 
-	// Calculate overall total time from the very beginning
 	overallTotalTime := time.Since(cfg.overallStartTime)
 
-	// Send completion message
 	p.Send(ui.RenderComplete{
 		OutputFile:       cfg.outputFile,
 		FileSize:         actualFileSize,

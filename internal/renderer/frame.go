@@ -46,7 +46,6 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 	// Calculate maximum possible bar height
 	maxBarHeight := centerY - config.CenterGap/2
 
-	// Get colors from runtime config (uses override or default)
 	barR, barG, barB := runtimeConfig.GetBarColor()
 	textR, textG, textB := runtimeConfig.GetTextColor()
 
@@ -69,7 +68,7 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 		barColorTable[intensity][2] = uint8(float64(barB) * factor)
 	}
 
-	// Pre-render framing line pattern (text color from config)
+	// Pre-render the framing-line pattern in the text colour.
 	framingLineData := make([]byte, totalWidth*4)
 	for px := range totalWidth {
 		offset := px * 4
@@ -79,7 +78,6 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 		framingLineData[offset+3] = 255   // A
 	}
 
-	// Format episode number as two-digit string
 	episodeStr := "00"
 	if meta.Episode > 0 {
 		episodeStr = formatEpisodeNumber(meta.Episode)
@@ -124,10 +122,7 @@ func (f *Frame) Draw(barHeights []float64) {
 		}
 	}
 
-	// Draw bars with vertical symmetry optimization
 	f.drawBars(barHeights)
-
-	// Draw framing lines around center gap
 	f.drawFramingLines()
 
 	// Apply text overlay (self-guards on a nil font face)

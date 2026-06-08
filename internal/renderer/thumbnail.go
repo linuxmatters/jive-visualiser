@@ -24,16 +24,14 @@ func getThumbnailTextColor(runtimeConfig *config.RuntimeConfig) color.RGBA {
 	return color.RGBA{R: r, G: g, B: b, A: 255}
 }
 
-// GenerateThumbnail creates a YouTube thumbnail with the title text overlaid
-// The thumbnail is the same resolution as the video (1280x720)
+// GenerateThumbnail creates a YouTube thumbnail with the title text overlaid, at
+// the same resolution as the video (1280x720).
 func GenerateThumbnail(outputPath string, meta PodcastMeta, runtimeConfig *config.RuntimeConfig) error {
-	// Load the thumbnail background image
 	thumbImg, err := loadThumbnailBackground(runtimeConfig)
 	if err != nil {
 		return fmt.Errorf("failed to load thumbnail background: %w", err)
 	}
 
-	// Load the bold font for thumbnail
 	fontData, err := embeddedAssets.ReadFile(config.ThumbnailFontAsset)
 	if err != nil {
 		return fmt.Errorf("failed to load bold font: %w", err)
@@ -44,23 +42,17 @@ func GenerateThumbnail(outputPath string, meta PodcastMeta, runtimeConfig *confi
 		return fmt.Errorf("failed to parse font: %w", err)
 	}
 
-	// Split title into 2 lines
 	line1, line2 := splitTitle(meta.Title)
-
-	// Find the largest font size that fits within constraints
 	fontSize := findOptimalFontSize(parsedFont, line1, line2)
 
-	// Create font face with optimal size
 	face := truetype.NewFace(parsedFont, &truetype.Options{
 		Size: fontSize,
 		DPI:  72,
 	})
 	defer face.Close()
 
-	// Draw the text on the thumbnail
 	drawThumbnailText(thumbImg, face, line1, line2, runtimeConfig)
 
-	// Save the thumbnail
 	if err := saveThumbnail(thumbImg, outputPath); err != nil {
 		return fmt.Errorf("failed to save thumbnail: %w", err)
 	}
@@ -80,16 +72,14 @@ func loadThumbnailBackground(runtimeConfig *config.RuntimeConfig) (*image.RGBA, 
 		return nil, err
 	}
 
-	// Check if scaling is needed
+	// Skip scaling when the source already matches the target resolution.
 	bounds := img.Bounds()
 	if bounds.Dx() == config.Width && bounds.Dy() == config.Height {
-		// Already correct size, just convert to RGBA
 		rgba := image.NewRGBA(bounds)
 		draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
 		return rgba, nil
 	}
 
-	// Scale to video resolution using the same method as LoadBackgroundImage
 	dst := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
 	draw.BiLinear.Scale(dst, dst.Bounds(), img, bounds, draw.Src, nil)
 	return dst, nil

@@ -107,7 +107,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create test RGB data
 	rgbSize := width * height * 3
 	rgbData := make([]byte, rgbSize)
 	for i := 0; i < rgbSize; i += 3 {
@@ -116,7 +115,6 @@ func main() {
 		rgbData[i+2] = uint8(i % 64)
 	}
 
-	// Allocate YUV frame
 	yuvFrame := ffmpeg.AVFrameAlloc()
 	yuvFrame.SetWidth(width)
 	yuvFrame.SetHeight(height)
@@ -130,7 +128,6 @@ func main() {
 			convertRGBToYUVGo(rgbData, yuvFrame, width, height)
 		}
 	case "swscale":
-		// Set up swscale context
 		swsCtx := ffmpeg.SwsAllocContext()
 		swsCtx.SetSrcW(width)
 		swsCtx.SetSrcH(height)
