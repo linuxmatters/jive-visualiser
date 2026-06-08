@@ -59,7 +59,7 @@ func BenchmarkFrameWithText(b *testing.B) {
 	bgImage := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
 	fontFace := basicfont.Face7x13
 	runtimeConfig := &config.RuntimeConfig{}
-	frame := NewFrame(bgImage, fontFace, PodcastMeta{Title: "Test Episode", Episode: 1}, runtimeConfig)
+	frame := NewFrame(bgImage, fontFace, PodcastMeta{Title: "Test Episode", Episode: new(1)}, runtimeConfig)
 	barHeights := generateTestBarHeights()
 
 	b.ResetTimer()
@@ -84,7 +84,7 @@ func TestFrameRendering(t *testing.T) {
 
 	fontFace := basicfont.Face7x13
 	runtimeConfig := &config.RuntimeConfig{}
-	frame := NewFrame(bgImage, fontFace, PodcastMeta{Title: "Linux Matters", Episode: 42}, runtimeConfig)
+	frame := NewFrame(bgImage, fontFace, PodcastMeta{Title: "Linux Matters", Episode: new(42)}, runtimeConfig)
 
 	// Test with various bar heights
 	barHeights := generateTestBarHeights()

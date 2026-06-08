@@ -28,7 +28,7 @@ var version = "dev"
 var CLI struct {
 	Input           string `arg:"" name:"input" help:"Input WAV file" optional:""`
 	Output          string `arg:"" name:"output" help:"Output MP4 file" optional:""`
-	Episode         int    `help:"Episode number" default:"0"`
+	Episode         *int   `help:"Episode number (omitted from output when not set)"`
 	Title           string `help:"Podcast title" default:"Podcast Title"`
 	Channels        int    `help:"Audio channels in MP4: 1 (mono) or 2 (stereo)" default:"1"`
 	BarColor        string `help:"Bar color in hex format (e.g., #A40000 or A40000)"`

@@ -34,6 +34,13 @@ Your podcast audio deserves more than a static image on YouTube. Jivefire transf
 ./jivefire --episode=42 --title="Linux Matters" input.wav output.mp4
 ```
 
+### Without Episode Number (unnumbered audio)
+```bash
+./jivefire --title="Linux Matters" input.wav output.mp4
+```
+
+`--episode` is optional. Omitting it suppresses the episode number overlay entirely — useful for archive or bonus audio that has no episode number. Passing `--episode=0` still renders `0` on-screen; absence is what controls the overlay, not the value.
+
 ### Example
 
 <div align="center">

@@ -10,9 +10,11 @@ import (
 )
 
 // PodcastMeta bundles the episode metadata shown on a frame and thumbnail.
+// A nil Episode means no episode number was supplied; the renderer then omits
+// the episode overlay entirely rather than drawing a placeholder.
 type PodcastMeta struct {
 	Title   string
-	Episode int
+	Episode *int
 }
 
 // Frame represents a single video frame with visualization bars
@@ -26,6 +28,7 @@ type Frame struct {
 
 	// Text overlay
 	episodeNum string
+	hasEpisode bool
 	title      string
 	textColor  color.RGBA // Text color for overlays
 
@@ -78,9 +81,11 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 		framingLineData[offset+3] = 255   // A
 	}
 
-	episodeStr := "00"
-	if meta.Episode > 0 {
-		episodeStr = formatEpisodeNumber(meta.Episode)
+	// Omit the episode overlay entirely when no episode number was supplied.
+	hasEpisode := meta.Episode != nil
+	var episodeStr string
+	if hasEpisode {
+		episodeStr = formatEpisodeNumber(*meta.Episode)
 	}
 
 	f := &Frame{
@@ -91,6 +96,7 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 		startX:          startX,
 		totalWidth:      totalWidth,
 		episodeNum:      episodeStr,
+		hasEpisode:      hasEpisode,
 		title:           meta.Title,
 		textColor:       color.RGBA{R: textR, G: textG, B: textB, A: 255},
 		maxBarHeight:    maxBarHeight,
@@ -252,7 +258,9 @@ func (f *Frame) mirrorBarHorizontal(xLeft, xRight, yStart, yEnd int) {
 func (f *Frame) applyTextOverlay() {
 	if f.fontFace != nil {
 		DrawCenterText(f.img, f.fontFace, f.title, f.centerY, f.textColor)
-		DrawEpisodeNumber(f.img, f.fontFace, f.episodeNum, f.textColor)
+		if f.hasEpisode {
+			DrawEpisodeNumber(f.img, f.fontFace, f.episodeNum, f.textColor)
+		}
 	}
 }
 
