@@ -416,13 +416,19 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	rearrangedHeights := make([]float64, config.NumBars)
 	barHeightsCopy := make([]float64, config.NumBars) // For UI updates
 
-	// Reusable private RGBA buffer for the preview. The render loop reuses the
-	// frame's internal image every iteration, so the UI goroutine must read a
-	// copy rather than the live buffer the next Draw will overwrite. Allocated
-	// once here, only when preview is enabled, to keep it off the hot path.
-	var previewImg *image.RGBA
+	// Double-buffered private RGBA images for the preview. The render loop reuses
+	// the frame's internal image every iteration, so the UI goroutine must read a
+	// copy rather than the live buffer the next Draw will overwrite. A single copy
+	// is not enough: the UI still holds the pointer from the previous send while
+	// the render loop overwrites that same buffer on the next tick. Ping-pong
+	// between two buffers so the producer always fills the one the UI is not
+	// reading. Allocated once here, only when preview is enabled, to keep it off
+	// the hot path.
+	var previewImgs [2]*image.RGBA
+	previewIdx := 0
 	if !cfg.noPreview {
-		previewImg = image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
+		previewImgs[0] = image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
+		previewImgs[1] = image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
 	}
 
 	sensitivity := 1.0
@@ -590,9 +596,12 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 
 			var frameData *image.RGBA
 			if !cfg.noPreview {
-				// Copy into the private buffer; the next frame.Draw mutates img.
+				// Copy into the buffer the UI is not reading; the next frame.Draw
+				// mutates img and the next send reuses the other buffer.
+				previewImg := previewImgs[previewIdx]
 				copy(previewImg.Pix, img.Pix)
 				frameData = previewImg
+				previewIdx ^= 1
 			}
 
 			p.Send(ui.RenderProgress{
