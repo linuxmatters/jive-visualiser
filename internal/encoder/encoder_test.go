@@ -5,6 +5,339 @@ import (
 	"testing"
 )
 
+// newTestFIFO allocates an avAudioFIFO for the given channel count with the AAC
+// encoder frame size as the initial capacity, and registers free() as a cleanup
+// so the suite does not leak C memory.
+func newTestFIFO(t *testing.T, channels int) *avAudioFIFO {
+	t.Helper()
+	const initialNbSamples = 1024 // AAC encoder frame size, samples per channel
+	fifo, err := newAVAudioFIFO(channels, initialNbSamples)
+	if err != nil {
+		t.Fatalf("newAVAudioFIFO(%d, %d) failed: %v", channels, initialNbSamples, err)
+	}
+	t.Cleanup(fifo.free)
+	return fifo
+}
+
+// fifoSize is a test helper that reads size() and fails on error.
+func fifoSize(t *testing.T, f *avAudioFIFO) int {
+	t.Helper()
+	n, err := f.size()
+	if err != nil {
+		t.Fatalf("size() failed: %v", err)
+	}
+	return n
+}
+
+// fifoWrite is a test helper that writes interleaved samples and fails on error.
+func fifoWrite(t *testing.T, f *avAudioFIFO, samples []float32) {
+	t.Helper()
+	if err := f.write(samples); err != nil {
+		t.Fatalf("write(%d samples) failed: %v", len(samples), err)
+	}
+}
+
+// fifoRead is a test helper that reads nbSamples per channel and returns a copy.
+// read() aliases the shared C scratch plane, so the values are copied out before
+// the caller's next write/read can overwrite them.
+func fifoRead(t *testing.T, f *avAudioFIFO, nbSamples int) []float32 {
+	t.Helper()
+	view, err := f.read(nbSamples)
+	if err != nil {
+		t.Fatalf("read(%d) failed: %v", nbSamples, err)
+	}
+	out := make([]float32, len(view))
+	copy(out, view)
+	return out
+}
+
+// TestAVAudioFIFO_WriteReadMono writes interleaved mono samples, reads a full
+// frame, and asserts the values round-trip exactly through the packed float32
+// FIFO.
+func TestAVAudioFIFO_WriteReadMono(t *testing.T) {
+	f := newTestFIFO(t, 1)
+
+	samples := []float32{1.0, 2.0, 3.0, 4.0, 5.0}
+	fifoWrite(t, f, samples)
+
+	if got := fifoSize(t, f); got != len(samples) {
+		t.Errorf("size() = %d, want %d", got, len(samples))
+	}
+
+	got := fifoRead(t, f, len(samples))
+	if len(got) != len(samples) {
+		t.Fatalf("read returned %d samples, want %d", len(got), len(samples))
+	}
+	for i := range samples {
+		if got[i] != samples[i] {
+			t.Errorf("sample %d = %v, want %v", i, got[i], samples[i])
+		}
+	}
+
+	if got := fifoSize(t, f); got != 0 {
+		t.Errorf("after full read, size() = %d, want 0", got)
+	}
+}
+
+// TestAVAudioFIFO_WriteReadStereo writes interleaved L/R samples and asserts the
+// read preserves interleaving (channels are not swapped) and exact values.
+func TestAVAudioFIFO_WriteReadStereo(t *testing.T) {
+	f := newTestFIFO(t, 2)
+
+	// Interleaved L0,R0,L1,R1,... with distinct, signed values per channel so a
+	// channel swap would be visible.
+	samples := []float32{-1.0, 1.0, -2.0, 2.0, -3.0, 3.0, -4.0, 4.0}
+	perChannel := len(samples) / 2
+	fifoWrite(t, f, samples)
+
+	if got := fifoSize(t, f); got != perChannel {
+		t.Errorf("size() = %d, want %d (samples per channel)", got, perChannel)
+	}
+
+	got := fifoRead(t, f, perChannel)
+	if len(got) != len(samples) {
+		t.Fatalf("read returned %d samples, want %d", len(got), len(samples))
+	}
+	for i := range samples {
+		if got[i] != samples[i] {
+			t.Errorf("interleaved sample %d = %v, want %v (L/R swap?)", i, got[i], samples[i])
+		}
+	}
+}
+
+// TestAVAudioFIFO_ReadMoreThanAvailable mirrors the old _PopMoreThanAvailable
+// intent: a read request larger than the buffered count returns only what is
+// available and drains the FIFO.
+func TestAVAudioFIFO_ReadMoreThanAvailable(t *testing.T) {
+	f := newTestFIFO(t, 1)
+
+	samples := []float32{1.0, 2.0, 3.0}
+	fifoWrite(t, f, samples)
+
+	if got := fifoSize(t, f); got != 3 {
+		t.Errorf("size() = %d, want 3", got)
+	}
+
+	// Request more than available; AVAudioFifoRead returns the available count.
+	got := fifoRead(t, f, 10)
+	if len(got) != 3 {
+		t.Fatalf("read(10) with 3 available returned %d samples, want 3", len(got))
+	}
+	for i := range samples {
+		if got[i] != samples[i] {
+			t.Errorf("sample %d = %v, want %v", i, got[i], samples[i])
+		}
+	}
+
+	if got := fifoSize(t, f); got != 0 {
+		t.Errorf("after over-read, size() = %d, want 0", got)
+	}
+}
+
+// TestAVAudioFIFO_EmptyBuffer verifies operations on an empty FIFO do not panic
+// and report zero, mirroring the old _EmptyBuffer intent.
+func TestAVAudioFIFO_EmptyBuffer(t *testing.T) {
+	f := newTestFIFO(t, 1)
+
+	if got := fifoSize(t, f); got != 0 {
+		t.Errorf("empty FIFO size() = %d, want 0", got)
+	}
+
+	// Read on empty returns zero samples, no error.
+	if got := fifoRead(t, f, 1024); len(got) != 0 {
+		t.Errorf("read(1024) on empty FIFO returned %d samples, want 0", len(got))
+	}
+
+	// Writing an empty slice is a no-op and leaves the FIFO empty.
+	fifoWrite(t, f, nil)
+	if got := fifoSize(t, f); got != 0 {
+		t.Errorf("after empty write, size() = %d, want 0", got)
+	}
+}
+
+// TestAVAudioFIFO_FrameAlignedDrain writes more than one encoder frame, drains
+// frame-aligned reads, and asserts a partial remainder survives for the flush
+// case. Stereo exercises the interleaved packed layout.
+func TestAVAudioFIFO_FrameAlignedDrain(t *testing.T) {
+	const (
+		channels     = 2
+		frame        = 1024 // encoder frame size, samples per channel
+		extraPerChan = 300  // partial remainder left after one full frame
+		totalPerChan = frame + extraPerChan
+	)
+	f := newTestFIFO(t, channels)
+
+	// Interleaved L/R: left = +index, right = -index, so a swap is detectable.
+	samples := make([]float32, totalPerChan*channels)
+	for i := range totalPerChan {
+		samples[i*2] = float32(i)
+		samples[i*2+1] = -float32(i)
+	}
+	fifoWrite(t, f, samples)
+
+	if got := fifoSize(t, f); got != totalPerChan {
+		t.Fatalf("size() = %d, want %d", got, totalPerChan)
+	}
+
+	// Drain one full encoder frame.
+	got := fifoRead(t, f, frame)
+	if len(got) != frame*channels {
+		t.Fatalf("read(%d) returned %d samples, want %d", frame, len(got), frame*channels)
+	}
+	for i := range frame {
+		if got[i*2] != float32(i) || got[i*2+1] != -float32(i) {
+			t.Fatalf("frame sample %d = (%v,%v), want (%v,%v)",
+				i, got[i*2], got[i*2+1], float32(i), -float32(i))
+		}
+	}
+
+	// The partial remainder is left for the flush path.
+	if got := fifoSize(t, f); got != extraPerChan {
+		t.Fatalf("after one frame drain, size() = %d, want %d", got, extraPerChan)
+	}
+
+	rem := fifoRead(t, f, extraPerChan)
+	if len(rem) != extraPerChan*channels {
+		t.Fatalf("remainder read returned %d samples, want %d", len(rem), extraPerChan*channels)
+	}
+	for i := range extraPerChan {
+		want := float32(frame + i)
+		if rem[i*2] != want || rem[i*2+1] != -want {
+			t.Fatalf("remainder sample %d = (%v,%v), want (%v,%v)",
+				i, rem[i*2], rem[i*2+1], want, -want)
+		}
+	}
+
+	if got := fifoSize(t, f); got != 0 {
+		t.Errorf("after draining remainder, size() = %d, want 0", got)
+	}
+}
+
+// TestAVAudioFIFO_SequentialOperations exercises multiple write/read rounds and
+// checks size() after each, mirroring the old _SequentialOperations intent.
+func TestAVAudioFIFO_SequentialOperations(t *testing.T) {
+	f := newTestFIFO(t, 1)
+
+	for round := range 5 {
+		samples := make([]float32, 10)
+		for i := range samples {
+			samples[i] = float32(round*10 + i)
+		}
+		fifoWrite(t, f, samples)
+
+		if got := fifoSize(t, f); got != 10 {
+			t.Errorf("round %d: after write, size() = %d, want 10", round, got)
+		}
+
+		first := fifoRead(t, f, 5)
+		if len(first) != 5 {
+			t.Fatalf("round %d: read(5) returned %d samples, want 5", round, len(first))
+		}
+		for i := range 5 {
+			if want := float32(round*10 + i); first[i] != want {
+				t.Errorf("round %d: sample %d = %v, want %v", round, i, first[i], want)
+			}
+		}
+
+		if got := fifoSize(t, f); got != 5 {
+			t.Errorf("round %d: after read(5), size() = %d, want 5", round, got)
+		}
+
+		second := fifoRead(t, f, 5)
+		for i := range 5 {
+			if want := float32(round*10 + 5 + i); second[i] != want {
+				t.Errorf("round %d: sample %d = %v, want %v", round, i+5, second[i], want)
+			}
+		}
+
+		if got := fifoSize(t, f); got != 0 {
+			t.Errorf("round %d: after draining, size() = %d, want 0", round, got)
+		}
+	}
+}
+
+// BenchmarkAVAudioFIFO_WriteRead measures one encoder-frame write+read round
+// trip through the AVAudioFifo wrapper (the closest analog to the old "Pop a
+// frame"). It crosses the CGO boundary once per write and once per read.
+func BenchmarkAVAudioFIFO_WriteRead(b *testing.B) {
+	const samplesPerFrame = 1024 // AAC frame size, samples per channel (mono)
+
+	samples := make([]float32, samplesPerFrame)
+	for i := range samples {
+		samples[i] = float32(i) * 0.001
+	}
+
+	fifo, err := newAVAudioFIFO(1, samplesPerFrame)
+	if err != nil {
+		b.Fatalf("newAVAudioFIFO failed: %v", err)
+	}
+	defer fifo.free()
+
+	// Sink to prevent the read result being optimised away.
+	var sink float32
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for range b.N {
+		if err := fifo.write(samples); err != nil {
+			b.Fatalf("write failed: %v", err)
+		}
+		result, err := fifo.read(samplesPerFrame)
+		if err != nil {
+			b.Fatalf("read failed: %v", err)
+		}
+		if len(result) == 0 {
+			b.Fatal("unexpected empty read")
+		}
+		sink += result[0]
+	}
+
+	if sink == 0 && b.N > 0 {
+		b.Log("sink used")
+	}
+}
+
+// BenchmarkAVAudioFIFO_WriteReadStereo measures the same write+read round trip
+// for the stereo (2-channel) packed path.
+func BenchmarkAVAudioFIFO_WriteReadStereo(b *testing.B) {
+	const samplesPerFrame = 1024 // samples per channel
+
+	samples := make([]float32, samplesPerFrame*2)
+	for i := range samples {
+		samples[i] = float32(i) * 0.001
+	}
+
+	fifo, err := newAVAudioFIFO(2, samplesPerFrame)
+	if err != nil {
+		b.Fatalf("newAVAudioFIFO failed: %v", err)
+	}
+	defer fifo.free()
+
+	var sink float32
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for range b.N {
+		if err := fifo.write(samples); err != nil {
+			b.Fatalf("write failed: %v", err)
+		}
+		result, err := fifo.read(samplesPerFrame)
+		if err != nil {
+			b.Fatalf("read failed: %v", err)
+		}
+		if len(result) == 0 {
+			b.Fatal("unexpected empty read")
+		}
+		sink += result[0]
+	}
+
+	if sink == 0 && b.N > 0 {
+		b.Log("sink used")
+	}
+}
+
 // TestEncoderPOC is a proof-of-concept test that encodes a single black frame via RGBA path
 func TestEncoderPOC(t *testing.T) {
 	outputPath := "../../testdata/poc-video.mp4"
@@ -118,271 +451,4 @@ func TestEncoderRGBA(t *testing.T) {
 	}
 
 	t.Logf("Successfully created RGBA video: %s (%d bytes)", outputPath, info.Size())
-}
-
-// TestAudioFIFO_PopMoreThanAvailable verifies that Pop() returns nil when
-// requesting more samples than available, catching potential slice bounds
-// panics or incorrect partial returns.
-func TestAudioFIFO_PopMoreThanAvailable(t *testing.T) {
-	fifo := NewAudioFIFO(1024)
-
-	// Push some samples
-	samples := []float32{1.0, 2.0, 3.0}
-	fifo.Push(samples)
-
-	if fifo.Available() != 3 {
-		t.Errorf("Available() = %d, want 3", fifo.Available())
-	}
-
-	// Request more than available
-	result := fifo.Pop(10)
-	if result != nil {
-		t.Errorf("Pop(10) with 3 samples available returned %v, want nil", result)
-	}
-
-	// FIFO should be unchanged
-	if fifo.Available() != 3 {
-		t.Errorf("After failed Pop, Available() = %d, want 3", fifo.Available())
-	}
-
-	// Should still be able to pop exactly available amount
-	result = fifo.Pop(3)
-	if result == nil {
-		t.Fatalf("Pop(3) with 3 samples available returned nil")
-	}
-	if len(result) != 3 {
-		t.Errorf("Pop(3) returned %d samples, want 3", len(result))
-	}
-	if result[0] != 1.0 || result[1] != 2.0 || result[2] != 3.0 {
-		t.Errorf("Pop(3) returned wrong values: %v", result)
-	}
-
-	// FIFO should be empty
-	if fifo.Available() != 0 {
-		t.Errorf("After Pop(3), Available() = %d, want 0", fifo.Available())
-	}
-
-	t.Logf("PopMoreThanAvailable test passed")
-}
-
-// TestAudioFIFO_EmptyBuffer verifies that operations on an empty FIFO
-// don't panic and return appropriate values.
-func TestAudioFIFO_EmptyBuffer(t *testing.T) {
-	fifo := NewAudioFIFO(1024)
-
-	// Test Available on empty buffer
-	if fifo.Available() != 0 {
-		t.Errorf("Empty FIFO Available() = %d, want 0", fifo.Available())
-	}
-
-	// Test Pop(0) on empty buffer - returns empty slice (not nil)
-	result := fifo.Pop(0)
-	if result == nil {
-		t.Errorf("Pop(0) on empty FIFO returned nil, want empty slice")
-	}
-	if len(result) != 0 {
-		t.Errorf("Pop(0) returned slice with len=%d, want 0", len(result))
-	}
-
-	// Test Pop(1) on empty buffer
-	result = fifo.Pop(1)
-	if result != nil {
-		t.Errorf("Pop(1) on empty FIFO returned %v, want nil", result)
-	}
-
-	// Test Pop with large number on empty buffer
-	result = fifo.Pop(1000)
-	if result != nil {
-		t.Errorf("Pop(1000) on empty FIFO returned %v, want nil", result)
-	}
-
-	t.Logf("EmptyBuffer test passed")
-}
-
-// TestAudioFIFO_BoundaryConditions tests edge cases with exact amounts.
-func TestAudioFIFO_BoundaryConditions(t *testing.T) {
-	fifo := NewAudioFIFO(1024)
-
-	// Push exact amount
-	samples := []float32{1.0, 2.0, 3.0, 4.0, 5.0}
-	fifo.Push(samples)
-
-	// Pop exact amount should succeed
-	result := fifo.Pop(5)
-	if result == nil {
-		t.Fatalf("Pop(5) with exactly 5 samples returned nil")
-	}
-	if len(result) != 5 {
-		t.Errorf("Pop(5) returned %d samples, want 5", len(result))
-	}
-
-	// Buffer should be empty
-	if fifo.Available() != 0 {
-		t.Errorf("After Pop(5), Available() = %d, want 0", fifo.Available())
-	}
-
-	// Pop on empty should return nil
-	result = fifo.Pop(1)
-	if result != nil {
-		t.Errorf("Pop(1) on now-empty FIFO returned %v, want nil", result)
-	}
-
-	t.Logf("BoundaryConditions test passed")
-}
-
-// TestAudioFIFO_SequentialOperations tests multiple push/pop operations.
-func TestAudioFIFO_SequentialOperations(t *testing.T) {
-	fifo := NewAudioFIFO(1024)
-
-	// Push and pop multiple times
-	for round := range 5 {
-		// Push 10 samples
-		samples := make([]float32, 10)
-		for i := range 10 {
-			samples[i] = float32(round*10 + i)
-		}
-		fifo.Push(samples)
-
-		if fifo.Available() != 10 {
-			t.Errorf("Round %d: After Push(10), Available() = %d, want 10", round, fifo.Available())
-		}
-
-		// Pop 5 samples
-		result := fifo.Pop(5)
-		if result == nil {
-			t.Fatalf("Round %d: Pop(5) returned nil", round)
-		}
-		if len(result) != 5 {
-			t.Errorf("Round %d: Pop(5) returned %d samples, want 5", round, len(result))
-		}
-
-		// Should have 5 left
-		if fifo.Available() != 5 {
-			t.Errorf("Round %d: After Pop(5), Available() = %d, want 5", round, fifo.Available())
-		}
-
-		// Pop remaining 5
-		result = fifo.Pop(5)
-		if result == nil {
-			t.Fatalf("Round %d: Pop(5) second time returned nil", round)
-		}
-
-		// Should be empty
-		if fifo.Available() != 0 {
-			t.Errorf("Round %d: After Pop(5) twice, Available() = %d, want 0", round, fifo.Available())
-		}
-	}
-
-	t.Logf("SequentialOperations test passed (5 rounds)")
-}
-
-// TestAudioFIFO_LargeValues tests with large sample counts.
-func TestAudioFIFO_LargeValues(t *testing.T) {
-	fifo := NewAudioFIFO(1024)
-
-	// Push a large number of samples
-	largeCount := 100000
-	samples := make([]float32, largeCount)
-	for i := range largeCount {
-		samples[i] = float32(i)
-	}
-	fifo.Push(samples)
-
-	if fifo.Available() != largeCount {
-		t.Errorf("After Push(%d), Available() = %d", largeCount, fifo.Available())
-	}
-
-	// Pop half
-	result := fifo.Pop(largeCount / 2)
-	if result == nil {
-		t.Fatalf("Pop(%d) returned nil", largeCount/2)
-	}
-	if len(result) != largeCount/2 {
-		t.Errorf("Pop(%d) returned %d samples", largeCount/2, len(result))
-	}
-
-	// Should have half left
-	if fifo.Available() != largeCount/2 {
-		t.Errorf("After Pop(%d), Available() = %d, want %d", largeCount/2, fifo.Available(), largeCount/2)
-	}
-
-	// Try to pop more than available
-	result = fifo.Pop(largeCount)
-	if result != nil {
-		t.Errorf("Pop(%d) with only %d available returned non-nil", largeCount, largeCount/2)
-	}
-
-	t.Logf("LargeValues test passed: %d samples", largeCount)
-}
-
-// BenchmarkAudioFIFO_Pop measures allocation overhead for Pop() operations
-// without returning slices to pool (simulates old behaviour).
-func BenchmarkAudioFIFO_Pop(b *testing.B) {
-	const samplesPerFrame = 1024 // AAC frame size
-
-	// Pre-generate samples to avoid allocation during benchmark
-	samples := make([]float32, samplesPerFrame)
-	for i := range samples {
-		samples[i] = float32(i) * 0.001
-	}
-
-	fifo := NewAudioFIFO(samplesPerFrame)
-
-	// Sink slice to force escape analysis (prevents inlining optimisation)
-	var results [][]float32
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		fifo.Push(samples)
-		result := fifo.Pop(samplesPerFrame)
-		if result == nil {
-			b.Fatal("unexpected nil from Pop")
-		}
-		// Append to slice to prevent compiler from stack-allocating
-		results = append(results, result)
-	}
-
-	// Prevent results from being optimised away
-	if len(results) == 0 && b.N > 0 {
-		b.Log("results used")
-	}
-}
-
-// BenchmarkAudioFIFO_PopWithPool measures Pop() with proper slice pooling.
-// This simulates real encoder behaviour where slices are returned to pool.
-func BenchmarkAudioFIFO_PopWithPool(b *testing.B) {
-	const samplesPerFrame = 1024 // AAC frame size
-
-	// Pre-generate samples to avoid allocation during benchmark
-	samples := make([]float32, samplesPerFrame)
-	for i := range samples {
-		samples[i] = float32(i) * 0.001
-	}
-
-	fifo := NewAudioFIFO(samplesPerFrame)
-
-	// Sink to prevent compiler optimisation
-	var sink float32
-
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		fifo.Push(samples)
-		result := fifo.Pop(samplesPerFrame)
-		if result == nil {
-			b.Fatal("unexpected nil from Pop")
-		}
-		// Use the result (simulates writeMonoFloats/writeStereoFloats)
-		sink += result[0]
-		// Return to pool as encoder does
-		fifo.ReturnSlice(result)
-	}
-
-	// Prevent sink from being optimised away
-	if sink == 0 && b.N > 0 {
-		b.Log("sink used")
-	}
 }

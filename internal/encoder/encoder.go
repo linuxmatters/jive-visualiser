@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sync"
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
@@ -36,79 +35,144 @@ type Config struct {
 	HWAccel       HWAccelType // Hardware acceleration type (default: auto-detect)
 }
 
-// AudioFIFO provides a simple FIFO buffer for audio samples with pooled slice allocation.
-type AudioFIFO struct {
-	buffer    []float32
-	frameSize int        // Samples per frame (e.g., 1024 for mono AAC, 2048 for stereo)
-	pool      *sync.Pool // Pooled slices for this frame size
+// avAudioFIFO wraps FFmpeg's AVAudioFifo, confining the C handle and all
+// plane-pointer marshalling behind this type so no consumer touches the C
+// boundary directly. The FIFO is packed (AVSampleFmtFlt) to preserve the
+// interleaved push contract; the planar split happens at drain (Task 2.3).
+type avAudioFIFO struct {
+	fifo     *ffmpeg.AVAudioFifo
+	channels int
+
+	// Persistent C scratch plane (AVMalloc-backed) used to marshal interleaved
+	// float32 samples across the CGO boundary for both write and read. Packed
+	// AVSampleFmtFlt has a single plane, so all interleaved samples live here.
+	// Write and read never run concurrently, so one buffer is shared. scratchCap
+	// is measured in float32 elements; grown on demand.
+	scratch    unsafe.Pointer
+	scratchCap int
 }
 
-// NewAudioFIFO creates a new audio FIFO buffer with pooled allocation for the given frame size.
-// frameSize should be encoderFrameSize * channels (e.g., 1024 for mono AAC, 2048 for stereo).
-func NewAudioFIFO(frameSize int) *AudioFIFO {
-	return &AudioFIFO{
-		buffer:    make([]float32, 0, 4096), // Start with reasonable capacity
-		frameSize: frameSize,
-		pool: &sync.Pool{
-			New: func() any {
-				s := make([]float32, frameSize)
-				return &s
-			},
-		},
+// newAVAudioFIFO allocates a packed float32 AVAudioFifo for the given channel
+// count with an initial sample-per-channel capacity. Returns an error if the
+// C allocation fails.
+func newAVAudioFIFO(channels, initialNbSamples int) (*avAudioFIFO, error) {
+	fifo := ffmpeg.AVAudioFifoAlloc(ffmpeg.AVSampleFmtFlt, channels, initialNbSamples)
+	if fifo == nil {
+		return nil, fmt.Errorf("failed to allocate AVAudioFifo")
 	}
+	return &avAudioFIFO{fifo: fifo, channels: channels}, nil
 }
 
-// Push adds samples to the FIFO
-func (f *AudioFIFO) Push(samples []float32) {
-	f.buffer = append(f.buffer, samples...)
-}
-
-// Pop removes and returns the requested number of samples.
-// Returns nil if not enough samples available.
-// For the configured frame size, returns a pooled slice.
-// Caller MUST call ReturnSlice() when done to return it to the pool.
-func (f *AudioFIFO) Pop(count int) []float32 {
-	if len(f.buffer) < count {
+// growScratch (re)allocates the C scratch plane to hold at least n float32
+// elements, mirroring the grow-on-demand pattern in reader.go:growOutputBuffer.
+func (f *avAudioFIFO) growScratch(n int) error {
+	if n <= 0 {
+		return fmt.Errorf("growScratch: non-positive element count %d", n)
+	}
+	if n <= f.scratchCap && f.scratch != nil {
 		return nil
 	}
-
-	var result []float32
-
-	// Use pooled slice for configured frame size
-	if count == f.frameSize {
-		result = *f.pool.Get().(*[]float32)
-	} else {
-		// Fallback to allocation for non-standard sizes (e.g., partial frames at flush)
-		result = make([]float32, count)
+	if f.scratch != nil {
+		ffmpeg.AVFree(f.scratch)
+		f.scratch = nil
 	}
-
-	copy(result, f.buffer[:count])
-
-	// Shift remaining samples
-	copy(f.buffer, f.buffer[count:])
-	f.buffer = f.buffer[:len(f.buffer)-count]
-
-	return result
+	p := ffmpeg.AVMalloc(uint64(n) * uint64(unsafe.Sizeof(float32(0))))
+	if p == nil {
+		return fmt.Errorf("failed to allocate audio FIFO scratch")
+	}
+	f.scratch = p
+	f.scratchCap = n
+	return nil
 }
 
-// ReturnSlice returns a slice to the pool after use.
-// Call this after processing each slice returned by Pop().
-// Safe to call with nil or non-pooled slices (will be no-op).
-func (f *AudioFIFO) ReturnSlice(s []float32) {
-	if s == nil || cap(s) != f.frameSize {
+// scratchSlice returns a []float32 view over the first n elements of the C
+// scratch plane. The view aliases C memory and stays valid until the next
+// growScratch or free.
+func (f *avAudioFIFO) scratchSlice(n int) []float32 {
+	return unsafe.Slice((*float32)(f.scratch), n)
+}
+
+// write copies interleaved float32 samples into the C scratch plane and writes
+// them to the packed FIFO. samples is interleaved (mono, or L0,R0,L1,R1 for
+// stereo); the per-channel sample count is len(samples)/channels.
+func (f *avAudioFIFO) write(samples []float32) error {
+	if len(samples) == 0 {
+		return nil
+	}
+	if err := f.growScratch(len(samples)); err != nil {
+		return err
+	}
+	copy(f.scratchSlice(len(samples)), samples)
+
+	nbSamples := len(samples) / f.channels
+	ret, err := ffmpeg.AVAudioFifoWrite(
+		f.fifo,
+		[]unsafe.Pointer{f.scratch},
+		nbSamples, f.channels, ffmpeg.AVSampleFmtFlt,
+	)
+	if err != nil {
+		return fmt.Errorf("write audio FIFO: %w", err)
+	}
+	if ret < 0 {
+		return fmt.Errorf("write audio FIFO: %w", ffmpeg.WrapErr(ret))
+	}
+	if ret != nbSamples {
+		return fmt.Errorf("write audio FIFO: wrote %d of %d samples", ret, nbSamples)
+	}
+	return nil
+}
+
+// size returns the number of samples per channel currently buffered.
+func (f *avAudioFIFO) size() (int, error) {
+	ret, err := ffmpeg.AVAudioFifoSize(f.fifo)
+	if err != nil {
+		return 0, fmt.Errorf("query audio FIFO size: %w", err)
+	}
+	if ret < 0 {
+		return 0, fmt.Errorf("query audio FIFO size: %w", ffmpeg.WrapErr(ret))
+	}
+	return ret, nil
+}
+
+// read removes nbSamples samples per channel from the FIFO into the C scratch
+// plane and returns an interleaved []float32 view over it (mono, or
+// L0,R0,L1,R1 for stereo). The view aliases the scratch plane and is valid
+// until the next write/read/free. Returns the actual per-channel sample count
+// read.
+func (f *avAudioFIFO) read(nbSamples int) ([]float32, error) {
+	total := nbSamples * f.channels
+	if err := f.growScratch(total); err != nil {
+		return nil, err
+	}
+	ret, err := ffmpeg.AVAudioFifoRead(
+		f.fifo,
+		[]unsafe.Pointer{f.scratch},
+		nbSamples, f.channels, ffmpeg.AVSampleFmtFlt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read audio FIFO: %w", err)
+	}
+	if ret < 0 {
+		return nil, fmt.Errorf("read audio FIFO: %w", ffmpeg.WrapErr(ret))
+	}
+	return f.scratchSlice(ret * f.channels), nil
+}
+
+// free releases the C AVAudioFifo and scratch plane. Safe to call on a nil
+// receiver or after the handles are already freed.
+func (f *avAudioFIFO) free() {
+	if f == nil {
 		return
 	}
-	f.pool.Put(&s)
-}
-
-// Available returns the number of samples in the buffer
-func (f *AudioFIFO) Available() int {
-	return len(f.buffer)
-}
-
-// FrameSize returns the configured samples per frame (encoderFrameSize × channels)
-func (f *AudioFIFO) FrameSize() int {
-	return f.frameSize
+	if f.fifo != nil {
+		ffmpeg.AVAudioFifoFree(f.fifo)
+		f.fifo = nil
+	}
+	if f.scratch != nil {
+		ffmpeg.AVFree(f.scratch)
+		f.scratch = nil
+		f.scratchCap = 0
+	}
 }
 
 // Encoder wraps FFmpeg encoding functionality
@@ -151,7 +215,7 @@ type Encoder struct {
 	audioStream   *ffmpeg.AVStream
 	audioCodec    *ffmpeg.AVCodecContext
 	audioEncFrame *ffmpeg.AVFrame
-	audioFIFO     *AudioFIFO // FIFO for frame size adjustment
+	audioFIFO     *avAudioFIFO // AVAudioFifo-backed FIFO for frame size adjustment (FFT needs 2048, AAC expects 1024)
 
 	// Timestamp tracking
 	nextVideoPts int64
@@ -626,9 +690,13 @@ func (e *Encoder) initializeAudioEncoder() error {
 		return fmt.Errorf("failed to allocate audio encoder frame")
 	}
 
-	// FIFO frame size = encoder frame size (1024 for AAC) × channel count.
-	samplesPerFrame := e.audioCodec.FrameSize() * outputChannels
-	e.audioFIFO = NewAudioFIFO(samplesPerFrame)
+	// AVAudioFifo-backed FIFO (packed float32) bridges the FFT chunk size
+	// (2048) to the AAC encoder frame size (1024).
+	audioFIFO, err := newAVAudioFIFO(outputChannels, e.audioCodec.FrameSize())
+	if err != nil {
+		return err
+	}
+	e.audioFIFO = audioFIFO
 
 	e.audioEncFrame.SetNbSamples(e.audioCodec.FrameSize())
 	e.audioEncFrame.SetFormat(int(ffmpeg.AVSampleFmtFltp))
@@ -865,13 +933,26 @@ func (e *Encoder) WriteAudioSamples(samples []float32) error {
 	encoderFrameSize := e.audioCodec.FrameSize() // 1024 for AAC
 	outputChannels := e.outputChannels()
 
-	e.audioFIFO.Push(samples)
+	if err := e.audioFIFO.write(samples); err != nil {
+		return err
+	}
 
-	// Drain the FIFO one encoder frame at a time.
-	samplesPerFrame := e.audioFIFO.FrameSize()
-	for e.audioFIFO.Available() >= samplesPerFrame {
-		// Pooled for AAC-sized frames.
-		frameSamples := e.audioFIFO.Pop(samplesPerFrame)
+	// Drain the FIFO one encoder frame at a time. AVAudioFifoSize reports
+	// samples-per-channel, so compare against encoderFrameSize (1024), not
+	// encoderFrameSize*channels.
+	for {
+		size, err := e.audioFIFO.size()
+		if err != nil {
+			return err
+		}
+		if size < encoderFrameSize {
+			break
+		}
+
+		frameSamples, err := e.audioFIFO.read(encoderFrameSize)
+		if err != nil {
+			return err
+		}
 
 		_, _ = ffmpeg.AVFrameMakeWritable(e.audioEncFrame)
 
@@ -881,9 +962,6 @@ func (e *Encoder) WriteAudioSamples(samples []float32) error {
 		} else {
 			writeErr = writeMonoFloats(e.audioEncFrame, frameSamples)
 		}
-
-		// Safe for non-pooled slices.
-		e.audioFIFO.ReturnSlice(frameSamples)
 
 		if writeErr != nil {
 			return fmt.Errorf("failed to write %s samples: %w",
@@ -916,14 +994,21 @@ func (e *Encoder) FlushAudioEncoder() error {
 	encoderFrameSize := e.audioCodec.FrameSize()
 	outputChannels := e.outputChannels()
 
-	// A final partial frame is zero-padded to a full encoder frame.
-	samplesPerFrame := e.audioFIFO.FrameSize()
-	remaining := e.audioFIFO.Available()
+	// Drain any residual partial frame (< encoderFrameSize samples-per-channel)
+	// from the AVAudioFifo and zero-pad it to a full encoder frame. The residual
+	// now lives in e.audioFIFO since WriteAudioSamples routes through it.
+	remaining, err := e.audioFIFO.size()
+	if err != nil {
+		return err
+	}
 	if remaining > 0 {
+		samplesPerFrame := encoderFrameSize * outputChannels
 		frameSamples := make([]float32, samplesPerFrame)
-		partialSamples := e.audioFIFO.Pop(remaining)
+		partialSamples, err := e.audioFIFO.read(remaining)
+		if err != nil {
+			return err
+		}
 		copy(frameSamples, partialSamples)
-		e.audioFIFO.ReturnSlice(partialSamples)
 
 		_, _ = ffmpeg.AVFrameMakeWritable(e.audioEncFrame)
 
@@ -1034,6 +1119,11 @@ func (e *Encoder) Close() error {
 
 	if e.audioEncFrame != nil {
 		ffmpeg.AVFrameFree(&e.audioEncFrame)
+	}
+
+	if e.audioFIFO != nil {
+		e.audioFIFO.free()
+		e.audioFIFO = nil
 	}
 
 	if e.hwDeviceCtx != nil {

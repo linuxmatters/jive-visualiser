@@ -49,7 +49,7 @@
 - FFT size: 2048 samples (Hanning window)
 - 64 frequency bars with log-scale binning
 - Harmonica spring peak-hold bar dynamics: each bar rises instantly to any new peak, then springs back toward the live level. Spring params: frequency `6.0`, damping `1.0`, delta `1/FPS`, gain `2.0` (replaces the amplitude lift the old CAVA integrator provided)
-- Audio frame size mismatch handled by `AudioFIFO` (FFT needs 2048, AAC expects 1024)
+- Audio frame size mismatch handled by FFmpeg's `AVAudioFifo` (in `internal/encoder/encoder.go`; FFT needs 2048, AAC expects 1024)
 
 ## Performance Patterns
 
