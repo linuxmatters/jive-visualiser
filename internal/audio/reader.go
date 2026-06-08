@@ -1,19 +1,27 @@
 package audio
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"slices"
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
 )
 
+// swrOutBufferSamples is the initial capacity, in samples, of the reusable
+// libswresample output buffer. Decoder frames are typically ≤4096 samples; the
+// buffer grows on demand if a frame ever exceeds this, so no per-chunk
+// allocation occurs in the steady state.
+const swrOutBufferSamples = 8192
+
 // StreamingReader provides chunk-based audio reading via FFmpeg's
 // libavformat/libavcodec, supporting any audio format FFmpeg can decode.
+//
+// Decoded samples of any input format and channel layout are converted to
+// packed mono float64 in [-1.0, 1.0] by libswresample, which applies the
+// correct downmix coefficients for multi-channel sources.
 type StreamingReader struct {
 	formatCtx   *ffmpeg.AVFormatContext
 	codecCtx    *ffmpeg.AVCodecContext
@@ -23,11 +31,22 @@ type StreamingReader struct {
 	sampleRate  int
 	channels    int
 
+	// swr converts each decoded frame to packed mono float64. outLayoutFrame
+	// owns the mono output channel layout passed to swr; outPlanes is the
+	// reusable C-allocated output buffer, sized in samples by outCap.
+	swr            *ffmpeg.SwrContext
+	outLayoutFrame *ffmpeg.AVFrame
+	outPlanes      []unsafe.Pointer
+	outCap         int
+	// inPlanes is a reusable scratch slice of the decoded frame's plane
+	// pointers, refilled per frame to avoid an allocation in the read loop.
+	inPlanes []unsafe.Pointer
+
 	// drained marks that the decoder has been flushed at end-of-stream, so the
 	// delay buffer is not drained twice.
 	drained bool
 
-	// Buffer for leftover samples from previous decode
+	// Buffer for leftover samples from previous decode.
 	sampleBuffer []float64
 }
 
@@ -82,27 +101,6 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 	d.sampleRate = d.codecCtx.SampleRate()
 	d.channels = d.codecCtx.ChLayout().NbChannels()
 
-	// Sample extraction only handles mono and stereo layouts; planar sources
-	// with more channels would read past the first channel plane.
-	if d.channels != 1 && d.channels != 2 {
-		d.Close()
-		return nil, fmt.Errorf("unsupported channel count: %d", d.channels)
-	}
-
-	sampleFmt := d.codecCtx.SampleFmt()
-	supportedFormats := map[ffmpeg.AVSampleFormat]bool{
-		ffmpeg.AVSampleFmtS16:  true, // 16-bit signed interleaved
-		ffmpeg.AVSampleFmtS32:  true, // 32-bit signed interleaved
-		ffmpeg.AVSampleFmtFlt:  true, // 32-bit float interleaved
-		ffmpeg.AVSampleFmtS16P: true, // 16-bit signed planar
-		ffmpeg.AVSampleFmtS32P: true, // 32-bit signed planar
-		ffmpeg.AVSampleFmtFltp: true, // 32-bit float planar
-	}
-	if !supportedFormats[sampleFmt] {
-		d.Close()
-		return nil, fmt.Errorf("unsupported sample format: %d", sampleFmt)
-	}
-
 	d.packet = ffmpeg.AVPacketAlloc()
 	if d.packet == nil {
 		d.Close()
@@ -115,11 +113,81 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 		return nil, fmt.Errorf("failed to allocate frame")
 	}
 
+	if err := d.initResampler(); err != nil {
+		d.Close()
+		return nil, err
+	}
+
 	return d, nil
 }
 
+// initResampler configures libswresample to convert the decoder's channel
+// layout, sample format, and rate into packed mono float64 at the same rate,
+// and allocates the reusable output buffer. swr handles every sample format,
+// planar or packed, and any channel count, applying correct downmix
+// coefficients in place of a hand-rolled stereo average.
+func (d *StreamingReader) initResampler() error {
+	// Own the mono output channel layout via a throwaway frame's embedded
+	// AVChannelLayout, mirroring the encoder's use of AVChannelLayoutDefault.
+	d.outLayoutFrame = ffmpeg.AVFrameAlloc()
+	if d.outLayoutFrame == nil {
+		return fmt.Errorf("failed to allocate output layout frame")
+	}
+	outLayout := d.outLayoutFrame.ChLayout()
+	ffmpeg.AVChannelLayoutDefault(outLayout, 1)
+
+	ret, err := ffmpeg.SwrAllocSetOpts2(
+		&d.swr,
+		outLayout, ffmpeg.AVSampleFmtDbl, d.sampleRate,
+		d.codecCtx.ChLayout(), d.codecCtx.SampleFmt(), d.sampleRate,
+		0, nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to configure resampler: %w", err)
+	}
+	if ret < 0 || d.swr == nil {
+		return fmt.Errorf("failed to configure resampler: error code %d", ret)
+	}
+
+	if ret, err := ffmpeg.SwrInit(d.swr); err != nil {
+		return fmt.Errorf("failed to initialise resampler: %w", err)
+	} else if ret < 0 {
+		return fmt.Errorf("failed to initialise resampler: error code %d", ret)
+	}
+
+	if err := d.growOutputBuffer(swrOutBufferSamples); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// growOutputBuffer (re)allocates the reusable mono float64 output buffer to hold
+// at least n samples. It is called once at setup and only again if a decoded
+// frame ever exceeds the current capacity, so the steady-state read loop makes
+// no allocations.
+func (d *StreamingReader) growOutputBuffer(n int) error {
+	if n <= d.outCap && d.outPlanes != nil {
+		return nil
+	}
+	if d.outPlanes != nil {
+		ffmpeg.AVSamplesFreePlanes(d.outPlanes)
+		d.outPlanes = nil
+	}
+	planes, _, ret, err := ffmpeg.AVSamplesAlloc(1, n, ffmpeg.AVSampleFmtDbl, 0)
+	if err != nil {
+		return fmt.Errorf("failed to allocate resampler output buffer: %w", err)
+	}
+	if ret < 0 {
+		return fmt.Errorf("failed to allocate resampler output buffer: error code %d", ret)
+	}
+	d.outPlanes = planes
+	d.outCap = n
+	return nil
+}
+
 // ReadChunk reads the next chunk of samples as float64.
-// Stereo input is automatically downmixed to mono.
+// Multi-channel input is automatically downmixed to mono.
 // Returns io.EOF when no more samples are available.
 func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
 	result := make([]float64, numSamples)
@@ -132,8 +200,8 @@ func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
 
 // ReadInto fills dst with the next samples as float64, decoding more from the
 // stream as needed, and returns the number of samples written. Samples are
-// copied straight into dst with no intermediate allocation. Stereo input is
-// automatically downmixed to mono. At end of stream it returns the final
+// copied straight into dst with no intermediate allocation. Multi-channel input
+// is automatically downmixed to mono. At end of stream it returns the final
 // partial count, then io.EOF once the sample buffer is exhausted.
 func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 	numSamples := len(dst)
@@ -151,10 +219,14 @@ func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 		if err != nil {
 			if errors.Is(err, ffmpeg.AVErrorEOF) {
 				// End of stream: flush the decoder once to recover any frames
-				// held in its delay buffer, then drain the sample buffer.
+				// held in its delay buffer, drain the resampler, then drain the
+				// sample buffer.
 				if !d.drained {
 					d.drained = true
 					if err := d.flushDecoder(); err != nil {
+						return 0, err
+					}
+					if err := d.drainResampler(); err != nil {
 						return 0, err
 					}
 				}
@@ -231,109 +303,95 @@ func (d *StreamingReader) flushDecoder() error {
 	return nil
 }
 
-// decodeS16 decodes a signed 16-bit little-endian sample at byte offset i,
-// normalised to [-1.0, 1.0].
-func decodeS16(buf []byte, i int) float64 {
-	// Same-width two's-complement reinterpretation, not a narrowing conversion.
-	val := int16(binary.LittleEndian.Uint16(buf[i:])) //nolint:gosec
-	return float64(val) / 32768.0
-}
-
-// decodeS32 decodes a signed 32-bit little-endian sample at byte offset i,
-// normalised to [-1.0, 1.0].
-func decodeS32(buf []byte, i int) float64 {
-	// Same-width two's-complement reinterpretation, not a narrowing conversion.
-	val := int32(binary.LittleEndian.Uint32(buf[i:])) //nolint:gosec
-	return float64(val) / 2147483648.0
-}
-
-// decodeF32 decodes a 32-bit IEEE 754 float sample at byte offset i.
-func decodeF32(buf []byte, i int) float64 {
-	return float64(math.Float32frombits(binary.LittleEndian.Uint32(buf[i:])))
-}
-
-// sampleDecoder selects the appropriate decode function and bytes-per-sample
-// for the given sample format code.
-func sampleDecoder(sampleFormat ffmpeg.AVSampleFormat) (func([]byte, int) float64, int, error) {
-	switch sampleFormat {
-	case ffmpeg.AVSampleFmtS16, ffmpeg.AVSampleFmtS16P:
-		return decodeS16, 2, nil
-	case ffmpeg.AVSampleFmtS32, ffmpeg.AVSampleFmtS32P:
-		return decodeS32, 4, nil
-	case ffmpeg.AVSampleFmtFlt, ffmpeg.AVSampleFmtFltp:
-		return decodeF32, 4, nil
-	default:
-		return nil, 0, fmt.Errorf("unsupported sample format: %d", sampleFormat)
-	}
-}
-
-// extractSamples decodes float64 samples from the current frame straight onto
-// the tail of d.sampleBuffer, avoiding a per-frame temporary allocation.
-// Stereo is automatically downmixed to mono.
+// extractSamples converts the current decoded frame to packed mono float64 via
+// libswresample and appends the result onto the tail of d.sampleBuffer. The
+// resampler reads the frame's plane pointers directly, so a single call handles
+// any sample format, planar or packed, and any channel layout.
 func (d *StreamingReader) extractSamples() error {
 	nbSamples := d.frame.NbSamples()
-	// Frame format is always a valid AVSampleFormat enum, within int32 range.
-	sampleFormat := ffmpeg.AVSampleFormat(d.frame.Format()) //nolint:gosec
-	channels := d.channels
+	if nbSamples == 0 {
+		return nil
+	}
 
-	decode, bps, err := sampleDecoder(sampleFormat)
+	// Upper bound on the output sample count for this input, accounting for any
+	// samples still buffered inside swr. Grow the reusable output buffer if the
+	// frame is unusually large.
+	outCount, err := ffmpeg.SwrGetOutSamples(d.swr, nbSamples)
 	if err != nil {
+		return fmt.Errorf("failed to size resampler output: %w", err)
+	}
+	if err := d.growOutputBuffer(outCount); err != nil {
 		return err
 	}
 
-	// Determine if format is planar (one sample plane per channel)
-	var isPlanar bool
-	switch sampleFormat {
-	case ffmpeg.AVSampleFmtS16P, ffmpeg.AVSampleFmtS32P, ffmpeg.AVSampleFmtFltp:
-		isPlanar = true
-	}
+	in := d.framePlanes()
+	_, err = d.convertAndAppend(in, nbSamples, outCount)
+	return err
+}
 
-	switch {
-	case isPlanar && channels == 2:
-		leftPtr := d.frame.Data().Get(0)
-		rightPtr := d.frame.Data().Get(1)
-		if leftPtr == nil || rightPtr == nil {
-			return fmt.Errorf("missing channel data")
+// drainResampler flushes any samples buffered inside swr at end-of-stream by
+// converting with a nil input until it yields nothing further. With output rate
+// equal to input rate swr holds no internal delay, but draining is performed
+// unconditionally so a future rate change cannot silently drop trailing samples.
+func (d *StreamingReader) drainResampler() error {
+	for {
+		outCount, err := ffmpeg.SwrGetOutSamples(d.swr, 0)
+		if err != nil {
+			return fmt.Errorf("failed to size resampler drain: %w", err)
 		}
-		leftBuf := unsafe.Slice((*byte)(leftPtr), nbSamples*bps)
-		rightBuf := unsafe.Slice((*byte)(rightPtr), nbSamples*bps)
-		samples := d.growSampleBuffer(nbSamples)
-		for i := range nbSamples {
-			samples[i] = (decode(leftBuf, i*bps) + decode(rightBuf, i*bps)) / 2
+		if outCount <= 0 {
+			return nil
 		}
-
-	case isPlanar && channels == 1:
-		dataPtr := d.frame.Data().Get(0)
-		if dataPtr == nil {
-			return fmt.Errorf("no data in frame")
+		if err := d.growOutputBuffer(outCount); err != nil {
+			return err
 		}
-		buf := unsafe.Slice((*byte)(dataPtr), nbSamples*bps)
-		samples := d.growSampleBuffer(nbSamples)
-		for i := range nbSamples {
-			samples[i] = decode(buf, i*bps)
+		got, err := d.convertAndAppend(nil, 0, outCount)
+		if err != nil {
+			return err
 		}
-
-	default:
-		// Interleaved formats
-		dataPtr := d.frame.Data().Get(0)
-		if dataPtr == nil {
-			return fmt.Errorf("no data in frame")
-		}
-		stride := bps * channels
-		buf := unsafe.Slice((*byte)(dataPtr), nbSamples*stride)
-		samples := d.growSampleBuffer(nbSamples)
-		if channels == 1 {
-			for i := range nbSamples {
-				samples[i] = decode(buf, i*stride)
-			}
-		} else {
-			for i := range nbSamples {
-				samples[i] = (decode(buf, i*stride) + decode(buf, i*stride+bps)) / 2
-			}
+		if got == 0 {
+			return nil
 		}
 	}
+}
 
-	return nil
+// convertAndAppend runs one swr conversion of inCount input samples (in may be
+// nil to flush) into the reusable output buffer, then appends the produced mono
+// float64 samples onto d.sampleBuffer. Returns the number of samples produced.
+func (d *StreamingReader) convertAndAppend(in []unsafe.Pointer, inCount, outCount int) (int, error) {
+	got, err := ffmpeg.SwrConvert(d.swr, d.outPlanes, outCount, in, inCount)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resample frame: %w", err)
+	}
+	if got < 0 {
+		return 0, fmt.Errorf("failed to resample frame: error code %d", got)
+	}
+	if got == 0 {
+		return 0, nil
+	}
+
+	// The output buffer is packed mono AVSampleFmtDbl, i.e. a contiguous run of
+	// float64, so reinterpret the first plane as a []float64 and copy onto the
+	// sample-buffer tail. This is the only unsafe access in the read path.
+	out := unsafe.Slice((*float64)(d.outPlanes[0]), got)
+	dst := d.growSampleBuffer(got)
+	copy(dst, out)
+	return got, nil
+}
+
+// framePlanes refills the reusable inPlanes slice with the current frame's plane
+// pointers: one plane per channel for planar formats, a single plane for packed.
+func (d *StreamingReader) framePlanes() []unsafe.Pointer {
+	nbPlanes := 1
+	if planar, _ := ffmpeg.AVSampleFmtIsPlanar(ffmpeg.AVSampleFormat(d.frame.Format())); planar > 0 { //nolint:gosec // frame format is a valid AVSampleFormat enum
+		nbPlanes = d.frame.ChLayout().NbChannels()
+	}
+	d.inPlanes = slices.Grow(d.inPlanes[:0], nbPlanes)[:nbPlanes]
+	data := d.frame.ExtendedData()
+	for i := range nbPlanes {
+		d.inPlanes[i] = data.Get(uintptr(i)) //nolint:gosec // plane index is bounded by channel count
+	}
+	return d.inPlanes
 }
 
 // growSampleBuffer extends d.sampleBuffer by n elements and returns the newly
@@ -351,6 +409,16 @@ func (d *StreamingReader) SampleRate() int {
 
 // Close releases all FFmpeg resources.
 func (d *StreamingReader) Close() error {
+	if d.outPlanes != nil {
+		ffmpeg.AVSamplesFreePlanes(d.outPlanes)
+		d.outPlanes = nil
+	}
+	if d.swr != nil {
+		ffmpeg.SwrFree(&d.swr)
+	}
+	if d.outLayoutFrame != nil {
+		ffmpeg.AVFrameFree(&d.outLayoutFrame)
+	}
 	if d.frame != nil {
 		ffmpeg.AVFrameFree(&d.frame)
 	}
