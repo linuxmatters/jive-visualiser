@@ -108,7 +108,10 @@ func TestAnalyzeFrameDirectly(t *testing.T) {
 		testSamples[i] = 0.5 * math.Sin(2*math.Pi*440*float64(i)/float64(config.SampleRate))
 	}
 
-	processor := NewProcessor()
+	processor, err := NewProcessor()
+	if err != nil {
+		t.Fatal(err)
+	}
 	coeffs := processor.ProcessChunk(testSamples)
 
 	analysis := analyzeFrame(coeffs, testSamples, nil)

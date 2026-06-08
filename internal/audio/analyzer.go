@@ -60,7 +60,11 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 		return nil, fmt.Errorf("input sample rate too low for %d FPS: %d Hz", config.FPS, reader.SampleRate())
 	}
 
-	processor := NewProcessor()
+	processor, err := NewProcessor()
+	if err != nil {
+		return nil, fmt.Errorf("creating FFT processor: %w", err)
+	}
+	defer processor.Close()
 
 	var sumRMS float64
 	var maxPeak float64
@@ -152,7 +156,7 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 // analyzeFrame extracts statistics from FFT coefficients and audio chunk.
 // barMagnitudes is an optional buffer that receives per-bar average magnitudes
 // for progress display; pass nil when bar magnitudes are not needed.
-func analyzeFrame(coeffs []complex128, audioChunk []float64, barMagnitudes []float64) FrameAnalysis {
+func analyzeFrame(spectrum Spectrum, audioChunk []float64, barMagnitudes []float64) FrameAnalysis {
 	analysis := FrameAnalysis{}
 
 	// Calculate RMS of audio chunk
@@ -168,7 +172,7 @@ func analyzeFrame(coeffs []complex128, audioChunk []float64, barMagnitudes []flo
 	if bins == nil {
 		bins = make([]float64, config.NumBars)
 	}
-	binRawMagnitudes(coeffs, bins)
+	binRawMagnitudes(spectrum, bins)
 
 	// Track peak across raw bar magnitudes
 	for _, avgMagnitude := range bins {
