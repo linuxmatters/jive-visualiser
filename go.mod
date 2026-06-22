@@ -11,7 +11,7 @@ require (
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0
 	github.com/linuxmatters/ffmpeg-statigo v0.0.0-00010101000000-000000000000
 	github.com/lucasb-eyer/go-colorful v1.4.0
-	golang.org/x/image v0.42.0
+	golang.org/x/image v0.43.0
 )
 
 require (
