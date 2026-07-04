@@ -13,8 +13,8 @@ import (
 // tick advances the springs by exactly one repaint interval. Angular frequency
 // and damping are chosen so bars chase a new target quickly without overshoot.
 const (
-	// spectrumSpringFreq sets how fast bars chase a new target. Raised from 8.0
-	// so the spectrum tracks the audio livelier, closer to the Speed sparkline's
+	// spectrumSpringFreq sets how fast bars chase a new target. A high value keeps
+	// the spectrum tracking the audio livelier, close to the Speed sparkline's
 	// energy; damping stays critical (1.0) so faster tracking adds no jitter.
 	spectrumSpringFreq    = 15.0
 	spectrumSpringDamping = 1.0
@@ -68,7 +68,7 @@ func renderSpectrum(barHeights []float64, width int) string {
 	}
 
 	// Normalise to the loudest current bar so the spectrum fills both rows each
-	// frame (per-frame auto-scaling, as the original did).
+	// frame (per-frame auto-scaling).
 	maxHeight := slices.Max(barHeights)
 	if maxHeight == 0 {
 		maxHeight = 1.0 // Avoid division by zero

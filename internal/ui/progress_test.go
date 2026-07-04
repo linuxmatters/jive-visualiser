@@ -433,8 +433,8 @@ func TestSpinnerShownOnlyInDeadAir(t *testing.T) {
 	})
 
 	t.Run("render with progress shows spinner in frame line", func(t *testing.T) {
-		// The spinner now leads the frame/source line (the film glyph was
-		// replaced), so it is present even with live progress data.
+		// The spinner leads the frame/source line, so it is present even with
+		// live progress data.
 		m := NewModel(true)
 		m.phase = PhaseRendering
 		m.pass2StartTime = time.Now()

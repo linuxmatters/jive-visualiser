@@ -327,7 +327,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case AnalysisComplete:
-		// Store audio profile for display
 		m.audioProfile = &AudioProfile{
 			Duration:     msg.Duration,
 			PeakLevel:    20 * math.Log10(msg.PeakMagnitude),
@@ -422,7 +421,7 @@ func (m *Model) View() tea.View {
 	}
 
 	// Alternate screen buffer prevents ghost box edges when the view height
-	// changes between passes (replaces v1 tea.WithAltScreen()).
+	// changes between passes.
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
@@ -472,7 +471,7 @@ func (m *Model) renderFinalProgress() string {
 	writeProgressRow(&s, m.progressBar.ViewAs(1.0), 100)
 	s.WriteString("\n\n")
 
-	// Final timing — the finished mirror of the live Pass 2 gauge cards. Time is
+	// Final timing, the finished mirror of the live Pass 2 gauge cards. Time is
 	// the total time taken; Speed is the final realtime ratio (no live sparkline);
 	// Size is the final file size; the live ETA card is repurposed as a Duration
 	// card showing the source audio length, with the 🎜 glyph in vivid red.
@@ -541,7 +540,7 @@ func (m *Model) renderProgress() string {
 		m.renderSpectrumAndStats(&s)
 	}
 
-	// Help footer — a single, always-present line so the box height is stable
+	// Help footer, a single always-present line so the box height is stable
 	// across the Pass 1 → Pass 2 transition (no footer-driven jitter). Styled to
 	// match the fire palette; rendered inside the bordered box so it stays within
 	// the alt screen. Omitted from the post-exit completion summary.

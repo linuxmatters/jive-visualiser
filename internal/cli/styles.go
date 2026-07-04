@@ -8,40 +8,41 @@ import (
 	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
-// Styles
+// Shared Lipgloss styles for CLI output.
 var (
-	// Title style - bold red with fire emoji
+	// TitleStyle renders the bold red banner heading.
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(theme.JiveRed).
 			MarginBottom(1)
 
-	// Section header style
+	// HeaderStyle renders a section header.
 	HeaderStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(theme.GoldOrange).
 			MarginTop(1).
 			MarginBottom(1)
 
-	// Error message style
+	// ErrorStyle renders an error message.
 	ErrorStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(theme.JiveRed)
 
-	// Warning message style
+	// WarningStyle renders a warning message.
 	WarningStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(theme.GoldOrange)
 
-	// Highlight style for important values
+	// HighlightStyle emphasises important values.
 	HighlightStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(theme.NeonYellow)
 
-	// Key-value pair styles
+	// KeyStyle renders the key of a key-value pair.
 	KeyStyle = lipgloss.NewStyle().
 			Foreground(theme.NeutralGray)
 
+	// ValueStyle renders the value of a key-value pair.
 	ValueStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(theme.BrightWhite)
@@ -53,7 +54,7 @@ func PrintVersion(version string) {
 	fmt.Printf("%s %s\n", KeyStyle.Render("Version:"), ValueStyle.Render(version))
 }
 
-// EncoderInfo holds information about a hardware encoder for display
+// EncoderInfo holds one hardware encoder's details for the probe display.
 type EncoderInfo struct {
 	Name        string
 	Description string

@@ -72,7 +72,7 @@ func LoadFont(size float64) (font.Face, error) {
 	return face, nil
 }
 
-// DrawCenterText draws text centered horizontally at the specified Y position
+// DrawCenterText draws text centred horizontally at the specified Y position.
 func DrawCenterText(img *image.RGBA, face font.Face, text string, centerY int, textColor color.RGBA) {
 	d := newTextDrawer(img, face, textColor)
 

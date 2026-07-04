@@ -17,7 +17,7 @@ type PodcastMeta struct {
 	Episode *int
 }
 
-// Frame represents a single video frame with visualization bars
+// Frame represents a single video frame with visualisation bars
 type Frame struct {
 	img        *image.RGBA
 	bgImage    *image.RGBA
@@ -30,17 +30,17 @@ type Frame struct {
 	episodeNum string
 	hasEpisode bool
 	title      string
-	textColor  color.RGBA // Text color for overlays
+	textColor  color.RGBA // Text colour for overlays
 
 	// Pre-computed values
 	maxBarHeight    int
-	intensityTable  []uint8    // Pre-computed intensity values for opaque gradient (0.5 to 1.0)
-	barColorTable   [][3]uint8 // Pre-computed bar colors at different intensity levels
+	intensityTable  []uint8    // Intensity values for the opaque gradient (0.5 dim tip to 1.0 bright centre)
+	barColorTable   [][3]uint8 // Bar colours pre-dimmed for each of the 256 intensity levels
 	framingLineData []byte     // Pre-rendered framing line pixel pattern
 	hasBackground   bool
 }
 
-// NewFrame creates a new optimized frame renderer
+// NewFrame creates a new optimised frame renderer
 func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtimeConfig *config.RuntimeConfig) *Frame {
 	totalWidth := config.NumBars*config.BarWidth + (config.NumBars-1)*config.BarGap
 	startX := (config.Width - totalWidth) / 2
@@ -52,17 +52,19 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 	barR, barG, barB := runtimeConfig.GetBarColor()
 	textR, textG, textB := runtimeConfig.GetTextColor()
 
-	// Pre-compute intensity gradient table (0.5 to 1.0 range for opaque gradient)
-	// This creates a fade from dim at tips to bright at center without alpha blending
+	// Pre-compute the intensity gradient once so the per-pixel hot path only
+	// indexes this table. Values fade from 0.5 at the tips to 1.0 at the
+	// centre, giving an opaque gradient with no alpha blending.
 	intensityTable := make([]uint8, maxBarHeight)
 	for i := range maxBarHeight {
 		distanceFromCenter := float64(i) / float64(maxBarHeight)
-		intensityFactor := 1.0 - (distanceFromCenter * 0.5) // 0.5 at tips, 1.0 at center
+		intensityFactor := 1.0 - (distanceFromCenter * 0.5) // 0.5 at tips, 1.0 at centre
 		intensityTable[i] = uint8(intensityFactor * 255)
 	}
 
-	// Pre-compute bar colors at different intensity levels (0-255)
-	// Colors are fully opaque - RGB values dimmed by intensity, alpha always 255
+	// Pre-compute the dimmed bar colour for every intensity level (0-255) so the
+	// hot path needs no per-pixel multiply. Colours stay fully opaque, RGB values
+	// dimmed by intensity, alpha always 255.
 	barColorTable := make([][3]uint8, 256)
 	for intensity := range 256 {
 		factor := float64(intensity) / 255.0
@@ -109,14 +111,13 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 	return f
 }
 
-// Draw renders the visualization bars using pre-computed values
+// Draw renders the visualisation bars using pre-computed values
 func (f *Frame) Draw(barHeights []float64) {
 	// Clear or copy background
 	if f.hasBackground {
 		copy(f.img.Pix, f.bgImage.Pix)
 	} else {
-		// Fast clear to black using optimized pattern
-		// Clear 8 pixels at a time for better memory bandwidth
+		// Clear to black 8 pixels (32 bytes) per copy for better memory bandwidth.
 		blackPattern := [32]byte{
 			0, 0, 0, 255, 0, 0, 0, 255,
 			0, 0, 0, 255, 0, 0, 0, 255,
@@ -135,14 +136,16 @@ func (f *Frame) Draw(barHeights []float64) {
 	f.applyTextOverlay()
 }
 
-// drawBars renders all bars using horizontal + vertical symmetry optimization.
-// The frequency data is arranged symmetrically: bars 0-31 are mirrored to create bars 32-63.
-// We render only the first 32 bars upward, then mirror 3 times:
-//  1. Vertical mirror → bars 0-31 downward
-//  2. Horizontal mirror → bars 32-63 upward
-//  3. Both mirrors → bars 32-63 downward
+// drawBars renders all bars using horizontal and vertical symmetry.
+// The frequency data is symmetric: bars 0-31 mirror to bars 32-63, and each
+// bar mirrors about the centre gap. So only the first 32 bars are rendered
+// upward, running the gradient maths once, then mirrored 3 times with plain
+// pixel copies:
+//  1. Vertical mirror to bars 0-31 downward
+//  2. Horizontal mirror to bars 32-63 upward
+//  3. Both mirrors to bars 32-63 downward
 //
-// This renders 1/4 of the pixels and is ~4x faster.
+// This computes 1/4 of the pixels and is roughly 4x faster than rendering each.
 func (f *Frame) drawBars(barHeights []float64) {
 	// Pre-allocate pixel pattern buffer (reused for all bars)
 	pixelPattern := make([]byte, config.BarWidth*4)
@@ -192,7 +195,7 @@ func (f *Frame) renderBar(x, yStart, yEnd, barHeight int, pixelPattern []byte) {
 			continue
 		}
 
-		// Calculate intensity for fade gradient (dim at tip → bright at center)
+		// Intensity for the fade gradient (dim at tip to bright at centre).
 		distanceFromCenter := yEnd - 1 - y
 		intensityIndex := (distanceFromCenter * f.maxBarHeight) / barHeight
 		if intensityIndex >= f.maxBarHeight {
@@ -264,18 +267,17 @@ func (f *Frame) applyTextOverlay() {
 	}
 }
 
-// drawFramingLines draws horizontal lines above and below the center gap
-// using the text color from config to frame the title text
+// drawFramingLines draws horizontal lines above and below the centre gap,
+// in the config text colour, to frame the title text.
 func (f *Frame) drawFramingLines() {
 	lineHeight := config.FramingLineHeight
 
-	// Calculate line positions
-	// Top line: just above where upward bars end
+	// Top line sits just above where upward bars end.
 	topLineY := f.centerY - config.CenterGap/2 - lineHeight
-	// Bottom line: just below where downward bars start
+	// Bottom line sits just below where downward bars start.
 	bottomLineY := f.centerY + config.CenterGap/2
 
-	// Draw top framing line (4 pixels high) - reuse pre-rendered pattern
+	// Each line copies the pre-rendered pattern once per scanline.
 	for y := topLineY; y < topLineY+lineHeight; y++ {
 		if y >= 0 && y < config.Height {
 			offset := y*f.img.Stride + f.startX*4
@@ -283,7 +285,6 @@ func (f *Frame) drawFramingLines() {
 		}
 	}
 
-	// Draw bottom framing line (4 pixels high) - reuse pre-rendered pattern
 	for y := bottomLineY; y < bottomLineY+lineHeight; y++ {
 		if y >= 0 && y < config.Height {
 			offset := y*f.img.Stride + f.startX*4
@@ -292,12 +293,12 @@ func (f *Frame) drawFramingLines() {
 	}
 }
 
-// formatEpisodeNumber formats an episode number as a two-digit string
+// formatEpisodeNumber zero-pads an episode number below 100 to two digits,
+// and returns larger numbers unpadded.
 func formatEpisodeNumber(num int) string {
 	if num < 100 {
 		return fmt.Sprintf("%02d", num)
 	}
-	// For numbers >= 100, return as-is
 	return fmt.Sprintf("%d", num)
 }
 

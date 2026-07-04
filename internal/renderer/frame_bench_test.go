@@ -20,9 +20,7 @@ func generateTestBarHeights() []float64 {
 
 // BenchmarkFrameWithBackground benchmarks frame rendering with background
 func BenchmarkFrameWithBackground(b *testing.B) {
-	// Setup
 	bgImage := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
-	// Fill background with test pattern
 	for i := 0; i < len(bgImage.Pix); i += 4 {
 		bgImage.Pix[i] = 64
 		bgImage.Pix[i+1] = 64
@@ -42,7 +40,6 @@ func BenchmarkFrameWithBackground(b *testing.B) {
 
 // BenchmarkFrameNoBackground benchmarks frame rendering without background (black)
 func BenchmarkFrameNoBackground(b *testing.B) {
-	// Setup - no background
 	runtimeConfig := &config.RuntimeConfig{}
 	frame := NewFrame(nil, nil, PodcastMeta{}, runtimeConfig)
 	barHeights := generateTestBarHeights()
@@ -55,7 +52,6 @@ func BenchmarkFrameNoBackground(b *testing.B) {
 
 // BenchmarkFrameWithText benchmarks frame rendering with text overlay
 func BenchmarkFrameWithText(b *testing.B) {
-	// Setup
 	bgImage := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
 	fontFace := basicfont.Face7x13
 	runtimeConfig := &config.RuntimeConfig{}
@@ -71,7 +67,6 @@ func BenchmarkFrameWithText(b *testing.B) {
 // TestFrameRendering verifies that frame rendering produces expected output
 func TestFrameRendering(t *testing.T) {
 	bgImage := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
-	// Fill with a simple pattern
 	for y := range config.Height {
 		for x := range config.Width {
 			offset := y*bgImage.Stride + x*4
@@ -86,13 +81,11 @@ func TestFrameRendering(t *testing.T) {
 	runtimeConfig := &config.RuntimeConfig{}
 	frame := NewFrame(bgImage, fontFace, PodcastMeta{Title: "Linux Matters", Episode: new(42)}, runtimeConfig)
 
-	// Test with various bar heights
 	barHeights := generateTestBarHeights()
 	frame.Draw(barHeights)
 
 	img := frame.GetImage()
 
-	// Verify image dimensions
 	if img.Bounds().Dx() != config.Width || img.Bounds().Dy() != config.Height {
 		t.Errorf("Image dimensions incorrect: got %dx%d, want %dx%d",
 			img.Bounds().Dx(), img.Bounds().Dy(), config.Width, config.Height)

@@ -243,8 +243,9 @@ func TestBinFFT_EnergyDistribution(t *testing.T) {
 	t.Logf("Energy distribution: %.6f total energy across %d/%d bars", totalEnergy, nonzeroCount, numBars)
 }
 
-// absf returns the absolute value of a float32 (mirrors tx_test.go:96-101). Kept
-// local; test helpers do not cross the module boundary.
+// absf returns the absolute value of a float32 (mirrors the absf helper in
+// ffmpeg-statigo's tx_test.go). Kept local; test helpers do not cross the
+// module boundary.
 func absf(v float32) float32 {
 	if v < 0 {
 		return -v
@@ -253,7 +254,7 @@ func absf(v float32) float32 {
 }
 
 // TestAVTxRDFTForwardDC mirrors the DC semantics of ffmpeg-statigo's
-// TestAVTxFloatFFTForwardDC (tx_test.go:26-93) but at the Processor/ProcessChunk
+// TestAVTxFloatFFTForwardDC but at the Processor/ProcessChunk
 // level, exercising the live av_tx RDFT path end to end. A constant (DC) real
 // input is fed through ProcessChunk and the DC bin (Spectrum index 0, i.e.
 // spectrum[0]/spectrum[1] re/im) must hold essentially all the energy while the
@@ -466,7 +467,7 @@ func TestRearrangeFrequenciesCenterOut_EdgeCases(t *testing.T) {
 
 // TestRearrangeFrequenciesCenterOut_SmallInput tests with minimal input size.
 func TestRearrangeFrequenciesCenterOut_SmallInput(t *testing.T) {
-	// Test the example from PLAN.md: [1,2,3,4] → symmetric output
+	// Worked example: [1,2,3,4] mirrors to symmetric output.
 	input := []float64{1, 2, 3, 4}
 	result := make([]float64, 4)
 

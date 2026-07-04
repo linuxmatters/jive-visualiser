@@ -38,7 +38,8 @@ type Config struct {
 // avAudioFIFO wraps FFmpeg's AVAudioFifo, confining the C handle and all
 // plane-pointer marshalling behind this type so no consumer touches the C
 // boundary directly. The FIFO is packed (AVSampleFmtFlt) to preserve the
-// interleaved push contract; the planar split happens at drain (Task 2.3).
+// interleaved push contract. The planar split happens at drain, in
+// writeMonoFloats and writeStereoFloats.
 type avAudioFIFO struct {
 	fifo     *ffmpeg.AVAudioFifo
 	channels int
@@ -378,7 +379,7 @@ func (e *Encoder) Initialize() (err error) {
 		// Hardware encoder options
 		e.setHWEncoderOptions(&opts)
 	} else {
-		// Software encoder (x264) options optimized for visualization content
+		// Software encoder (x264) options optimised for visualisation content
 		// CRF 24 = good quality for busy visualizations
 		_, _ = ffmpeg.AVDictSet(&opts, ffmpeg.ToCStr("crf"), ffmpeg.ToCStr("24"), 0)
 		// Faster preset prioritizes encoding speed
@@ -434,7 +435,7 @@ func (e *Encoder) setHWEncoderOptions(opts **ffmpeg.AVDictionary) {
 
 	switch e.hwEncoder.Type {
 	case HWAccelNVENC:
-		// NVENC options optimized for fast visualisation encoding
+		// NVENC options optimised for fast visualisation encoding
 		// Preset p1 = fastest encoding (scale runs p1=fastest to p7=slowest)
 		_, _ = ffmpeg.AVDictSet(opts, ffmpeg.ToCStr("preset"), ffmpeg.ToCStr("p1"), 0)
 		// Low latency tuning - reduces pipeline delay
@@ -456,7 +457,7 @@ func (e *Encoder) setHWEncoderOptions(opts **ffmpeg.AVDictionary) {
 		_, _ = ffmpeg.AVDictSet(opts, ffmpeg.ToCStr("profile"), ffmpeg.ToCStr("main"), 0)
 
 	case HWAccelVulkan:
-		// Vulkan Video options optimized for fast visualisation encoding
+		// Vulkan Video options optimised for fast visualisation encoding
 		_, _ = ffmpeg.AVDictSet(opts, ffmpeg.ToCStr("content"), ffmpeg.ToCStr("rendered"), 0)
 		// Quality level (0-51, lower=better) - same as NVENC CQ
 		_, _ = ffmpeg.AVDictSet(opts, ffmpeg.ToCStr("qp"), ffmpeg.ToCStr("24"), 0)
@@ -470,7 +471,7 @@ func (e *Encoder) setHWEncoderOptions(opts **ffmpeg.AVDictionary) {
 		_, _ = ffmpeg.AVDictSet(opts, ffmpeg.ToCStr("b_depth"), ffmpeg.ToCStr("1"), 0)
 
 	case HWAccelVAAPI:
-		// VA-API options optimized for fast visualisation encoding
+		// VA-API options optimised for fast visualisation encoding
 		// Quality level (1-51, lower=better) - CQP rate control
 		_, _ = ffmpeg.AVDictSet(opts, ffmpeg.ToCStr("qp"), ffmpeg.ToCStr("24"), 0)
 		// Main profile for broad compatibility

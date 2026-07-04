@@ -10,7 +10,7 @@ import (
 	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
-// Custom help styles - fire theme
+// Custom help styles, fire theme
 var (
 	helpTitleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -40,7 +40,8 @@ var (
 				Italic(true)
 )
 
-// StyledHelpPrinter creates a custom help printer with Lipgloss styling
+// StyledHelpPrinter returns a Kong help printer that renders usage, arguments,
+// and flags with the Lipgloss fire theme.
 func StyledHelpPrinter(options kong.HelpOptions) kong.HelpPrinter {
 	return kong.HelpPrinter(func(options kong.HelpOptions, ctx *kong.Context) error {
 		var sb strings.Builder
@@ -142,7 +143,6 @@ type flag struct {
 func getArguments(ctx *kong.Context) []argument {
 	var args []argument
 
-	// Parse arguments from the model
 	for _, arg := range ctx.Model.Positional {
 		name := arg.Summary()
 		help := arg.Help
@@ -161,7 +161,6 @@ func getFlags(ctx *kong.Context) []flag {
 		help:  "Show context-sensitive help.",
 	})
 
-	// Parse flags from the model
 	for _, f := range ctx.Model.Flags {
 		if f.Name == "help" {
 			continue // Already added

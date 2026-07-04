@@ -13,8 +13,8 @@ import (
 // TestRenderSpectrumUsesThemeRamp verifies renderSpectrum colours its bars from
 // the theme-provided go-colorful Lab ramp: the ramp is consumed (FireSpectrum has
 // stops), block runes survive, the output carries ANSI colour codes, and a hot
-// bar is styled differently from a cool bar — proving the per-cell colour-index
-// mapping still works across the new ramp length.
+// bar is styled differently from a cool bar, proving the per-cell colour-index
+// mapping works across the ramp length.
 func TestRenderSpectrumUsesThemeRamp(t *testing.T) {
 	if len(theme.FireSpectrum) == 0 {
 		t.Fatal("theme.FireSpectrum is empty; spectrum has no colours to draw from")

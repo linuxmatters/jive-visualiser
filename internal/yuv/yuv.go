@@ -7,8 +7,11 @@ import (
 	"sync"
 )
 
-// YCbCr coefficients from Go's color/ycbcr.go (BT.601 standard).
-// These are fixed-point values scaled by 65536 for integer arithmetic.
+// YCbCr coefficients from Go's color/ycbcr.go (full-range JFIF BT.601).
+// Full-range means Y, Cb and Cr span the whole 0-255 byte range, so there is no
+// studio-swing headroom or footroom. The values are the real coefficients scaled
+// by 65536, letting the conversion run in integer arithmetic and recover the
+// result with a single >>16 shift instead of float multiplies on the hot path.
 const (
 	// Y coefficients (sum = 65536)
 	YR = 19595 // 0.299 * 65536
@@ -33,7 +36,12 @@ func RGBToY(r, g, b int32) uint8 {
 	return uint8((YR*r + YG*g + YB*b + 1<<15) >> 16) //nolint:gosec // result is clamped to 0-255
 }
 
-// RGBToCb converts RGB to Cb (blue-difference chroma) with branchless clamping.
+// RGBToCb converts RGB to Cb (blue-difference chroma) with a branchless clamp.
+//
+// The 257<<15 bias centres chroma on 128 and adds the half-LSB rounding term. A
+// valid result occupies the low 24 bits, so a set top byte means the value fell
+// outside 0-255: ^(cb >> 31) then fills the byte with 0 for a negative overflow
+// or 255 for a positive one, dodging a compare-and-branch on the hot path.
 //
 //go:inline
 func RGBToCb(r, g, b int32) uint8 {
@@ -46,7 +54,8 @@ func RGBToCb(r, g, b int32) uint8 {
 	return uint8(cb) //nolint:gosec // value is clamped by branch above
 }
 
-// RGBToCr converts RGB to Cr (red-difference chroma) with branchless clamping.
+// RGBToCr converts RGB to Cr (red-difference chroma) with a branchless clamp.
+// The clamp works exactly as in RGBToCb.
 //
 //go:inline
 func RGBToCr(r, g, b int32) uint8 {
@@ -64,9 +73,12 @@ type rowRange struct {
 	startY, endY int
 }
 
-// partitionRows splits height rows across numCPU workers using the same rules
-// ParallelRows uses: even slices of rowsPerWorker, a < 1 fallback that gives
-// one row per worker, and the last worker absorbing the remainder.
+// partitionRows splits height rows across one worker per CPU. Each worker takes
+// an even slice of rowsPerWorker and the last worker absorbs the remainder, so
+// every row is covered exactly once with no gaps or overlap. When there are more
+// CPUs than rows, rowsPerWorker floors to 0, so the fallback pins it to one row
+// per worker and caps numCPU at height to avoid empty trailing ranges.
+// ParallelRows and RowPool share this split, keeping their output identical.
 func partitionRows(height int) []rowRange {
 	numCPU := runtime.NumCPU()
 	rowsPerWorker := height / numCPU

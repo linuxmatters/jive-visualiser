@@ -11,7 +11,6 @@ import (
 // TestGenerateSampleThumbnail generates a sample thumbnail for development/testing
 // This serves both as a test and as a useful development tool
 func TestGenerateSampleThumbnail(t *testing.T) {
-	// Test with real recent episode titles
 	testCases := []struct {
 		title      string
 		outputName string
@@ -30,21 +29,18 @@ func TestGenerateSampleThumbnail(t *testing.T) {
 		},
 	}
 
-	// Use default config (nil runtimeConfig uses defaults)
+	// An empty RuntimeConfig falls back to the default colours and assets.
 	runtimeConfig := &config.RuntimeConfig{}
 
 	for _, tc := range testCases {
 		t.Run(tc.title, func(t *testing.T) {
-			// Create output in testdata directory
 			outputPath := filepath.Join("../../testdata", tc.outputName)
 
-			// Generate thumbnail
 			err := GenerateThumbnail(outputPath, PodcastMeta{Title: tc.title}, runtimeConfig)
 			if err != nil {
 				t.Fatalf("failed to generate thumbnail: %v", err)
 			}
 
-			// Verify file was created
 			if _, err := os.Stat(outputPath); os.IsNotExist(err) {
 				t.Fatalf("thumbnail file was not created: %s", outputPath)
 			}

@@ -105,9 +105,8 @@ func TestAVAudioFIFO_WriteReadStereo(t *testing.T) {
 	}
 }
 
-// TestAVAudioFIFO_ReadMoreThanAvailable mirrors the old _PopMoreThanAvailable
-// intent: a read request larger than the buffered count returns only what is
-// available and drains the FIFO.
+// TestAVAudioFIFO_ReadMoreThanAvailable checks that a read request larger than
+// the buffered count returns only what is available and drains the FIFO.
 func TestAVAudioFIFO_ReadMoreThanAvailable(t *testing.T) {
 	f := newTestFIFO(t, 1)
 
@@ -135,7 +134,7 @@ func TestAVAudioFIFO_ReadMoreThanAvailable(t *testing.T) {
 }
 
 // TestAVAudioFIFO_EmptyBuffer verifies operations on an empty FIFO do not panic
-// and report zero, mirroring the old _EmptyBuffer intent.
+// and report zero.
 func TestAVAudioFIFO_EmptyBuffer(t *testing.T) {
 	f := newTestFIFO(t, 1)
 
@@ -214,7 +213,7 @@ func TestAVAudioFIFO_FrameAlignedDrain(t *testing.T) {
 }
 
 // TestAVAudioFIFO_SequentialOperations exercises multiple write/read rounds and
-// checks size() after each, mirroring the old _SequentialOperations intent.
+// checks size() after each.
 func TestAVAudioFIFO_SequentialOperations(t *testing.T) {
 	f := newTestFIFO(t, 1)
 
@@ -316,7 +315,7 @@ func TestEncoderPOC(t *testing.T) {
 // TestEncoderRGBA tests the RGBA frame writing path
 func TestEncoderRGBA(t *testing.T) {
 	outputPath := "../../testdata/poc-rgba-video.mp4"
-	defer os.Remove(outputPath) // Clean up after test
+	defer os.Remove(outputPath)
 
 	config := Config{
 		OutputPath: outputPath,
