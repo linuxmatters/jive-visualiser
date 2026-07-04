@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
 	"github.com/alecthomas/kong"
 	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
@@ -42,7 +41,7 @@ var (
 
 // StyledHelpPrinter returns a Kong help printer that renders usage, arguments,
 // and flags with the Lipgloss fire theme.
-func StyledHelpPrinter(options kong.HelpOptions) kong.HelpPrinter {
+func StyledHelpPrinter() kong.HelpPrinter {
 	return kong.HelpPrinter(func(options kong.HelpOptions, ctx *kong.Context) error {
 		var sb strings.Builder
 
@@ -84,16 +83,9 @@ func StyledHelpPrinter(options kong.HelpOptions) kong.HelpPrinter {
 	})
 }
 
-// helpTable returns a borderless table used purely for column alignment, so the
-// name column (flags or arguments) lines up regardless of name length. Borders
-// and column dividers are off; the StyleFunc keys on the column.
-func helpTable() *table.Table {
-	return theme.BorderlessTable()
-}
-
 // argumentTable renders parsed arguments into aligned name/help columns.
 func argumentTable(args []argument) string {
-	t := helpTable().StyleFunc(func(_, col int) lipgloss.Style {
+	t := theme.BorderlessTable().StyleFunc(func(_, col int) lipgloss.Style {
 		if col == 0 {
 			return helpArgStyle.PaddingLeft(2).PaddingRight(2)
 		}
@@ -108,7 +100,7 @@ func argumentTable(args []argument) string {
 // flagTable renders parsed flags into aligned name/help columns, appending the
 // default-value suffix to the help cell.
 func flagTable(flags []flag) string {
-	t := helpTable().StyleFunc(func(_, col int) lipgloss.Style {
+	t := theme.BorderlessTable().StyleFunc(func(_, col int) lipgloss.Style {
 		if col == 0 {
 			return helpFlagStyle.PaddingLeft(2).PaddingRight(2)
 		}

@@ -9,8 +9,8 @@ import (
 // TestPrefillWritesWholeBuffer asserts the whole FFT prefill (all n samples
 // FillFFTBuffer returned) reaches the encoder, not just one frame's worth.
 // Truncating to samplesPerFrame dropped ~13 ms of audio at 44.1 kHz. It pins
-// writeAudioPrefill, the function the runPass2 call site uses, so a
-// regression at that seam fails the suite.
+// convertAndWriteAudio, the function the runPass2 call site uses, so a
+// regression in that path fails the suite.
 func TestPrefillWritesWholeBuffer(t *testing.T) {
 	// 44.1 kHz: samplesPerFrame (1470) is smaller than the FFT prefill, the
 	// case where truncation loses audio.
@@ -40,8 +40,8 @@ func TestPrefillWritesWholeBuffer(t *testing.T) {
 			}
 			monoBuf := make([]float32, convBufLen)
 			stereoBuf := make([]float32, convBufLen*2)
-			if err := writeAudioPrefill(write, src, config.FFTSize, tc.stereo, monoBuf, stereoBuf); err != nil {
-				t.Fatalf("writeAudioPrefill: %v", err)
+			if err := convertAndWriteAudio(write, src, config.FFTSize, tc.stereo, monoBuf, stereoBuf); err != nil {
+				t.Fatalf("convertAndWriteAudio: %v", err)
 			}
 			if got != tc.want {
 				t.Errorf("prefill wrote %d samples, want %d", got, tc.want)

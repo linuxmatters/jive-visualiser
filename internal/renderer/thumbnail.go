@@ -262,7 +262,8 @@ func drawCenteredLineOnTemp(img *image.RGBA, face font.Face, text string, imgWid
 	}
 
 	d := newTextDrawer(img, face, getThumbnailTextColor(runtimeConfig))
-	textWidth := measureStringWidth(d, text)
+	bounds, _ := d.BoundString(text)
+	textWidth := (bounds.Max.X - bounds.Min.X).Ceil()
 
 	// Centre horizontally.
 	x := (imgWidth - textWidth) / 2

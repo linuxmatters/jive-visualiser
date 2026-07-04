@@ -29,7 +29,6 @@ type StreamingReader struct {
 	packet      *ffmpeg.AVPacket
 	frame       *ffmpeg.AVFrame
 	sampleRate  int
-	channels    int
 
 	// swr converts each decoded frame to packed mono float64. outLayoutFrame
 	// owns the mono output channel layout passed to swr; outPlanes is the
@@ -99,7 +98,6 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 	}
 
 	d.sampleRate = d.codecCtx.SampleRate()
-	d.channels = d.codecCtx.ChLayout().NbChannels()
 
 	d.packet = ffmpeg.AVPacketAlloc()
 	if d.packet == nil {
@@ -184,18 +182,6 @@ func (d *StreamingReader) growOutputBuffer(n int) error {
 	d.outPlanes = planes
 	d.outCap = n
 	return nil
-}
-
-// ReadChunk reads the next chunk of samples as float64.
-// Multi-channel input is automatically downmixed to mono.
-// Returns io.EOF when no more samples are available.
-func (d *StreamingReader) ReadChunk(numSamples int) ([]float64, error) {
-	result := make([]float64, numSamples)
-	n, err := d.ReadInto(result)
-	if err != nil {
-		return nil, err
-	}
-	return result[:n], nil
 }
 
 // ReadInto fills dst with the next samples as float64, decoding more from the

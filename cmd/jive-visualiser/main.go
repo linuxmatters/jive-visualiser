@@ -49,7 +49,7 @@ func main() {
 		kong.Description("Spin your podcast .wav into a groovy MP4 visualiser."),
 		kong.Vars{"version": version},
 		kong.UsageOnError(),
-		kong.Help(cli.StyledHelpPrinter(kong.HelpOptions{Compact: true})),
+		kong.Help(cli.StyledHelpPrinter()),
 	)
 
 	if CLI.Version {
@@ -331,13 +331,6 @@ func convertAndWriteAudio(write func([]float32) error, src []float64, n int, ste
 	return write(monoBuf[:n])
 }
 
-// writeAudioPrefill converts and writes every one of the n prefill samples;
-// truncating to samplesPerFrame here would silently drop audio from the start
-// of the stream.
-func writeAudioPrefill(write func([]float32) error, fftBuffer []float64, n int, stereo bool, monoBuf, stereoBuf []float32) error {
-	return convertAndWriteAudio(write, fftBuffer, n, stereo, monoBuf, stereoBuf)
-}
-
 // audioConvBufLen returns the length the audio conversion buffers need: they
 // must hold the whole FFT prefill (config.FFTSize samples), which exceeds
 // samplesPerFrame at common sample rates; at high rates samplesPerFrame is
@@ -513,7 +506,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	// the encoder absorbs the surplus beyond frame 0. Reuse the conversion
 	// buffers: WriteAudioSamples copies into the FIFO and retains no reference,
 	// and the buffers are overwritten before each later use in the render loop.
-	if err := writeAudioPrefill(enc.WriteAudioSamples, fftBuffer, n, stereo, audioSamples, stereoSamples); err != nil {
+	if err := convertAndWriteAudio(enc.WriteAudioSamples, fftBuffer, n, stereo, audioSamples, stereoSamples); err != nil {
 		fail(fmt.Errorf("writing initial audio: %w", err))
 		return
 	}

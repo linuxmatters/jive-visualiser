@@ -17,10 +17,12 @@ func newTextDrawer(img *image.RGBA, face font.Face, col color.RGBA) *font.Drawer
 	}
 }
 
-// measureStringWidth returns the pixel width of text as rendered by the drawer.
-func measureStringWidth(d *font.Drawer, text string) int {
+// measureDrawerText returns the pixel width and height of text as rendered by the drawer.
+func measureDrawerText(d *font.Drawer, text string) (int, int) {
 	bounds, _ := d.BoundString(text)
-	return (bounds.Max.X - bounds.Min.X).Ceil()
+	width := (bounds.Max.X - bounds.Min.X).Ceil()
+	height := (bounds.Max.Y - bounds.Min.Y).Ceil()
+	return width, height
 }
 
 // measureTextBounds returns the pixel width and full bounds of text as rendered by the given face.
