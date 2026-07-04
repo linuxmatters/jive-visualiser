@@ -47,13 +47,13 @@
 ## Audio Processing
 
 - FFT size: 2048 samples (Hanning window)
-- 64 frequency bars with log-scale binning
+- 64 frequency bars with linear (uniform) frequency binning; logarithmic scaling applies to amplitude only
 - Harmonica spring peak-hold bar dynamics: each bar rises instantly to any new peak, then springs back toward the live level. Spring params: frequency `6.0`, damping `1.0`, delta `1/FPS`, gain `2.0` (replaces the amplitude lift the old CAVA integrator provided)
 - Audio frame size mismatch handled by FFmpeg's `AVAudioFifo` (in `internal/encoder/encoder.go`; FFT needs 2048, AAC expects 1024)
 
 ## Performance Patterns
 
-- RGB→YUV conversion in `encoder/frame.go` parallelised across CPU cores via `yuv.ParallelRows` (8.4× faster than swscale)
+- RGB→YUV conversion in `encoder/frame.go` parallelised across CPU cores via `yuv.ParallelRows` (13.2× faster than swscale)
 - `convertRGBAToYUV` (YUV420P) and `convertRGBAToNV12` (NV12) in `encoder/frame.go` are intentionally kept as separate functions despite near-identical structure — the hot-path duplication avoids a callback/interface indirection that would hurt throughput; do not refactor into a shared helper (shared low-level primitives live in `internal/yuv`)
 - Frame rendering uses symmetric mirroring (draw 1/4 pixels, mirror 3×)
 - Pre-computed intensity/colour tables in `renderer/frame.go`
@@ -89,9 +89,13 @@
 - Audio profile display persists from Pass 1 through Pass 2
 - Video preview: `internal/ui/preview.go`
 
+## Releases
+
+- Do not add checksum or hash generation to the release workflow. GitHub shows SHA256 digests for release assets by default.
+
 ## Environment
 
 - NixOS development shell via `flake.nix`
 - Fish shell for terminal commands
 - CGO required (`CGO_ENABLED=1` in build)
-- Go 1.24.0 minimum
+- Go 1.26 minimum

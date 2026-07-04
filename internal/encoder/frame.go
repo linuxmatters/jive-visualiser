@@ -7,7 +7,7 @@ import (
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
-	"github.com/linuxmatters/jivefire/internal/yuv"
+	"github.com/linuxmatters/jive-visualiser/internal/yuv"
 )
 
 // convertRGBAToYUV converts RGBA data directly to YUV420P (planar) format.

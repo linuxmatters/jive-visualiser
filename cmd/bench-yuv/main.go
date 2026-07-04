@@ -1,4 +1,4 @@
-// bench-yuv is a standalone benchmark for RGB→YUV colour space conversion.
+// bench-yuv is a standalone benchmark for RGBA→YUV colour space conversion.
 // Designed to be called by hyperfine for statistical analysis.
 //
 // Usage:
@@ -13,7 +13,7 @@ import (
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
-	"github.com/linuxmatters/jivefire/internal/yuv"
+	"github.com/linuxmatters/jive-visualiser/internal/yuv"
 )
 
 const (
@@ -21,7 +21,10 @@ const (
 	height = 720
 )
 
-func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height int) {
+// convertRGBAToYUVGo mirrors the production hot path (convertRGBAToYUV in
+// internal/encoder/frame.go): RGBA input converted over a yuv.RowPool. The
+// production function is unexported, so the loop is replicated here.
+func convertRGBAToYUVGo(pool *yuv.RowPool, rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width int) {
 	yPlane := yuvFrame.Data().Get(0)
 	uPlane := yuvFrame.Data().Get(1)
 	vPlane := yuvFrame.Data().Get(2)
@@ -30,7 +33,8 @@ func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 	uLinesize := yuvFrame.Linesize().Get(1)
 	vLinesize := yuvFrame.Linesize().Get(2)
 
-	yuv.ParallelRows(height, func(startY, endY int) {
+	pool.Run(func(startY, endY int) {
+		// Align startY to even for correct UV row calculation
 		evenStart := startY
 		if evenStart&1 != 0 {
 			evenStart++
@@ -42,16 +46,17 @@ func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 			uvY := y >> 1
 			uRowPtr := unsafe.Add(uPlane, uvY*uLinesize)
 			vRowPtr := unsafe.Add(vPlane, uvY*vLinesize)
-			rgbIdx := y * width * 3
+			rgbaIdx := y * width * 4
 
 			for x := range width {
-				r := int32(rgbData[rgbIdx])
-				g := int32(rgbData[rgbIdx+1])
-				b := int32(rgbData[rgbIdx+2])
-				rgbIdx += 3
+				r := int32(rgbaData[rgbaIdx])
+				g := int32(rgbaData[rgbaIdx+1])
+				b := int32(rgbaData[rgbaIdx+2])
+				rgbaIdx += 4 // Skip alpha
 
 				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 
+				// UV subsampling: every other pixel on even rows
 				if (x & 1) == 0 {
 					uvX := x >> 1
 					*(*uint8)(unsafe.Add(uRowPtr, uvX)) = yuv.RGBToCb(r, g, b)
@@ -60,20 +65,20 @@ func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 			}
 		}
 
-		// Process odd rows: Y only
+		// Process odd rows: Y only (no UV)
 		oddStart := startY
 		if oddStart&1 == 0 {
 			oddStart++
 		}
 		for y := oddStart; y < endY; y += 2 {
 			yPtr := unsafe.Add(yPlane, y*yLinesize)
-			rgbIdx := y * width * 3
+			rgbaIdx := y * width * 4
 
 			for x := range width {
-				r := int32(rgbData[rgbIdx])
-				g := int32(rgbData[rgbIdx+1])
-				b := int32(rgbData[rgbIdx+2])
-				rgbIdx += 3
+				r := int32(rgbaData[rgbaIdx])
+				g := int32(rgbaData[rgbaIdx+1])
+				b := int32(rgbaData[rgbaIdx+2])
+				rgbaIdx += 4 // Skip alpha
 
 				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
 			}
@@ -81,16 +86,16 @@ func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height i
 	})
 }
 
-func convertSwscale(rgbData []byte, yuvFrame *ffmpeg.AVFrame, swsCtx *ffmpeg.SwsContext, srcFrame *ffmpeg.AVFrame, width, height int) {
-	// Copy RGB data into source frame
+func convertSwscale(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, swsCtx *ffmpeg.SwsContext, srcFrame *ffmpeg.AVFrame, width, height int) {
+	// Copy RGBA data into source frame
 	srcLinesize := srcFrame.Linesize().Get(0)
 	srcData := srcFrame.Data().Get(0)
 
 	for y := range height {
 		srcOffset := y * srcLinesize
-		rgbOffset := y * width * 3
-		for x := 0; x < width*3; x++ {
-			*(*uint8)(unsafe.Add(srcData, srcOffset+x)) = rgbData[rgbOffset+x]
+		rgbaOffset := y * width * 4
+		for x := 0; x < width*4; x++ {
+			*(*uint8)(unsafe.Add(srcData, srcOffset+x)) = rgbaData[rgbaOffset+x]
 		}
 	}
 
@@ -107,12 +112,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	rgbSize := width * height * 3
-	rgbData := make([]byte, rgbSize)
-	for i := 0; i < rgbSize; i += 3 {
-		rgbData[i] = uint8(i % 256)
-		rgbData[i+1] = uint8(i % 128)
-		rgbData[i+2] = uint8(i % 64)
+	rgbaSize := width * height * 4
+	rgbaData := make([]byte, rgbaSize)
+	for i := 0; i < rgbaSize; i += 4 {
+		rgbaData[i] = uint8(i % 256)   // R
+		rgbaData[i+1] = uint8(i % 128) // G
+		rgbaData[i+2] = uint8(i % 64)  // B
+		rgbaData[i+3] = 255            // A
 	}
 
 	yuvFrame := ffmpeg.AVFrameAlloc()
@@ -124,14 +130,17 @@ func main() {
 
 	switch *impl {
 	case "go":
+		pool := yuv.NewRowPool(height)
+		defer pool.Close()
+
 		for i := 0; i < *iterations; i++ {
-			convertRGBToYUVGo(rgbData, yuvFrame, width, height)
+			convertRGBAToYUVGo(pool, rgbaData, yuvFrame, width)
 		}
 	case "swscale":
 		swsCtx := ffmpeg.SwsAllocContext()
 		swsCtx.SetSrcW(width)
 		swsCtx.SetSrcH(height)
-		swsCtx.SetSrcFormat(int(ffmpeg.AVPixFmtRgb24))
+		swsCtx.SetSrcFormat(int(ffmpeg.AVPixFmtRgba))
 		swsCtx.SetDstW(width)
 		swsCtx.SetDstH(height)
 		swsCtx.SetDstFormat(int(ffmpeg.AVPixFmtYuv420P))
@@ -142,12 +151,12 @@ func main() {
 		srcFrame := ffmpeg.AVFrameAlloc()
 		srcFrame.SetWidth(width)
 		srcFrame.SetHeight(height)
-		srcFrame.SetFormat(int(ffmpeg.AVPixFmtRgb24))
+		srcFrame.SetFormat(int(ffmpeg.AVPixFmtRgba))
 		_, _ = ffmpeg.AVFrameGetBuffer(srcFrame, 0)
 		defer ffmpeg.AVFrameFree(&srcFrame)
 
 		for i := 0; i < *iterations; i++ {
-			convertSwscale(rgbData, yuvFrame, swsCtx, srcFrame, width, height)
+			convertSwscale(rgbaData, yuvFrame, swsCtx, srcFrame, width, height)
 		}
 	}
 }

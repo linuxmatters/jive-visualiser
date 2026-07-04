@@ -1,4 +1,4 @@
-module github.com/linuxmatters/jivefire
+module github.com/linuxmatters/jive-visualiser
 
 go 1.26
 

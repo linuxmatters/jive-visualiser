@@ -7,8 +7,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
-	"github.com/linuxmatters/jivefire/internal/config"
-	"github.com/linuxmatters/jivefire/internal/theme"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
 func (m *Model) renderComplete() string {

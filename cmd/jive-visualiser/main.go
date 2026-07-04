@@ -13,12 +13,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/alecthomas/kong"
 	"github.com/charmbracelet/harmonica"
-	"github.com/linuxmatters/jivefire/internal/audio"
-	"github.com/linuxmatters/jivefire/internal/cli"
-	"github.com/linuxmatters/jivefire/internal/config"
-	"github.com/linuxmatters/jivefire/internal/encoder"
-	"github.com/linuxmatters/jivefire/internal/renderer"
-	"github.com/linuxmatters/jivefire/internal/ui"
+	"github.com/linuxmatters/jive-visualiser/internal/audio"
+	"github.com/linuxmatters/jive-visualiser/internal/cli"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/encoder"
+	"github.com/linuxmatters/jive-visualiser/internal/renderer"
+	"github.com/linuxmatters/jive-visualiser/internal/ui"
 )
 
 // version is set via ldflags at build time: "dev" for local builds, the git tag
@@ -273,6 +273,10 @@ func generateVideo(inputFile string, outputFile string, channels int, noPreview 
 		for _, w := range m.AssetWarnings() {
 			cli.PrintWarning(w)
 		}
+		if renderErr := m.RenderError(); renderErr != nil {
+			cli.PrintError(renderErr.Error())
+			os.Exit(1)
+		}
 		if summary := m.CompletionSummary(); summary != "" {
 			fmt.Println(summary)
 		}
@@ -310,15 +314,50 @@ func expandMonoToStereo(dst []float32, src []float64, n int) {
 	}
 }
 
+// convertAndWriteAudio converts n mono float64 samples from src to float32 via
+// the pre-allocated buffers (duplicating each sample into interleaved L,R
+// pairs when stereo) and writes them with write. When stereo, stereoBuf must
+// hold at least 2*n elements (monoBuf is unused and may be nil); otherwise
+// monoBuf must hold at least n (stereoBuf is unused and may be nil).
+func convertAndWriteAudio(write func([]float32) error, src []float64, n int, stereo bool, monoBuf, stereoBuf []float32) error {
+	if stereo {
+		expandMonoToStereo(stereoBuf, src, n)
+		return write(stereoBuf[:n*2])
+	}
+	for i := range n {
+		monoBuf[i] = float32(src[i])
+	}
+	return write(monoBuf[:n])
+}
+
+// writeAudioPrefill converts and writes every one of the n prefill samples;
+// truncating to samplesPerFrame here would silently drop audio from the start
+// of the stream.
+func writeAudioPrefill(write func([]float32) error, fftBuffer []float64, n int, stereo bool, monoBuf, stereoBuf []float32) error {
+	return convertAndWriteAudio(write, fftBuffer, n, stereo, monoBuf, stereoBuf)
+}
+
+// audioConvBufLen returns the length the audio conversion buffers need: they
+// must hold the whole FFT prefill (config.FFTSize samples), which exceeds
+// samplesPerFrame at common sample rates; at high rates samplesPerFrame is
+// the larger of the two.
+func audioConvBufLen(samplesPerFrame int) int {
+	return max(samplesPerFrame, config.FFTSize)
+}
+
 // runPass2 collects any non-fatal warnings during rendering (e.g. an asset that
 // failed to load and was dropped) and delivers them on the RenderComplete
 // message so the caller can print them after the Bubbletea alt screen exits.
 func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	var warnings []string
+	// fail delivers a fatal Pass 2 error on the RenderComplete message so the
+	// caller can print it (and exit non-zero) after the alt screen closes.
+	fail := func(err error) {
+		p.Send(ui.RenderComplete{Err: err, AssetWarnings: warnings})
+	}
 	reader, err := audio.NewStreamingReader(cfg.inputFile)
 	if err != nil {
-		cli.PrintError(fmt.Sprintf("opening audio stream: %v", err))
-		p.Quit()
+		fail(fmt.Errorf("opening audio stream: %w", err))
 		return
 	}
 	defer reader.Close()
@@ -333,14 +372,12 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		HWAccel:       cfg.hwAccel,
 	})
 	if err != nil {
-		cli.PrintError(fmt.Sprintf("creating encoder: %v", err))
-		p.Quit()
+		fail(fmt.Errorf("creating encoder: %w", err))
 		return
 	}
 
 	if err = enc.Initialize(); err != nil {
-		cli.PrintError(fmt.Sprintf("initialising encoder: %v", err))
-		p.Quit()
+		fail(fmt.Errorf("initialising encoder: %w", err))
 		return
 	}
 
@@ -371,8 +408,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 
 	processor, err := audio.NewProcessor()
 	if err != nil {
-		cli.PrintError(fmt.Sprintf("creating FFT processor: %v", err))
-		p.Quit()
+		fail(fmt.Errorf("creating FFT processor: %w", err))
 		return
 	}
 	defer processor.Close()
@@ -445,49 +481,39 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	samplesPerFrame := reader.SampleRate() / config.FPS
 	fftBuffer := make([]float64, config.FFTSize)
 
-	// Pre-allocate reusable buffers for audio processing (avoid per-frame allocations)
+	// Pre-allocate reusable buffers for audio processing (avoid per-frame
+	// allocations). See audioConvBufLen for the sizing rationale.
+	convBufLen := audioConvBufLen(samplesPerFrame)
 	newSamples := make([]float64, samplesPerFrame)
-	audioSamples := make([]float32, samplesPerFrame)
+	audioSamples := make([]float32, convBufLen)
 	// The reader downmixes to mono. For stereo output the encoder expects
 	// interleaved L,R pairs, so duplicate each mono sample into both channels via
 	// this pre-allocated buffer (no per-frame allocation).
 	stereo := cfg.channels == 2
 	var stereoSamples []float32
 	if stereo {
-		stereoSamples = make([]float32, samplesPerFrame*2)
+		stereoSamples = make([]float32, convBufLen*2)
 	}
 
 	// Pre-fill buffer with first chunk
 	n, err := audio.FillFFTBuffer(reader, fftBuffer)
 	if err != nil {
-		cli.PrintError(fmt.Sprintf("error reading initial audio chunk: %v", err))
-		p.Quit()
+		fail(fmt.Errorf("reading initial audio chunk: %w", err))
 		return
 	}
 	if n == 0 {
-		cli.PrintError("no audio data available")
-		p.Quit()
+		fail(errors.New("no audio data available"))
 		return
 	}
 
-	// Write initial audio samples to encoder (first samplesPerFrame worth).
-	// This corresponds to the audio for frame 0. Reuse the audioSamples buffer:
-	// WriteAudioSamples copies into the FIFO and retains no reference, and the
-	// buffer is overwritten before each later use in the render loop.
-	initialCount := min(samplesPerFrame, n)
-	var initialErr error
-	if stereo {
-		expandMonoToStereo(stereoSamples, fftBuffer, initialCount)
-		initialErr = enc.WriteAudioSamples(stereoSamples[:initialCount*2])
-	} else {
-		for i := range initialCount {
-			audioSamples[i] = float32(fftBuffer[i])
-		}
-		initialErr = enc.WriteAudioSamples(audioSamples[:initialCount])
-	}
-	if initialErr != nil {
-		cli.PrintError(fmt.Sprintf("error writing initial audio: %v", initialErr))
-		p.Quit()
+	// Write the whole prefill to the encoder. FillFFTBuffer consumed n samples
+	// from the reader, so all n must reach the encoder or that audio is lost
+	// (truncating to samplesPerFrame dropped ~13 ms at 44.1 kHz). The FIFO in
+	// the encoder absorbs the surplus beyond frame 0. Reuse the conversion
+	// buffers: WriteAudioSamples copies into the FIFO and retains no reference,
+	// and the buffers are overwritten before each later use in the render loop.
+	if err := writeAudioPrefill(enc.WriteAudioSamples, fftBuffer, n, stereo, audioSamples, stereoSamples); err != nil {
+		fail(fmt.Errorf("writing initial audio: %w", err))
 		return
 	}
 
@@ -580,8 +606,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		t0 = time.Now()
 		img := frame.GetImage()
 		if err := enc.WriteFrameRGBA(img.Pix); err != nil {
-			cli.PrintError(fmt.Sprintf("error encoding frame %d: %v", frameNum, err))
-			p.Quit()
+			fail(fmt.Errorf("encoding frame %d: %w", frameNum, err))
 			return
 		}
 		totalEncode += time.Since(t0)
@@ -635,52 +660,32 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 				totalAudio += time.Since(t0)
 				break
 			}
-			cli.PrintError(fmt.Sprintf("error reading audio: %v", readErr))
-			p.Quit()
+			fail(fmt.Errorf("reading audio: %w", readErr))
 			return
 		}
 
 		// Convert this frame's float64 samples to float32 for the AAC encoder via
 		// the pre-allocated buffers, sliced to the actual length. For stereo the
 		// mono signal is duplicated into both interleaved channels.
-		var writeErr error
-		if stereo {
-			expandMonoToStereo(stereoSamples, newSamples, nRead)
-			writeErr = enc.WriteAudioSamples(stereoSamples[:nRead*2])
-		} else {
-			for i := range nRead {
-				audioSamples[i] = float32(newSamples[i])
-			}
-			writeErr = enc.WriteAudioSamples(audioSamples[:nRead])
-		}
-		if writeErr != nil {
-			cli.PrintError(fmt.Sprintf("error writing audio at frame %d: %v", frameNum, writeErr))
-			p.Quit()
+		if writeErr := convertAndWriteAudio(enc.WriteAudioSamples, newSamples, nRead, stereo, audioSamples, stereoSamples); writeErr != nil {
+			fail(fmt.Errorf("writing audio at frame %d: %w", frameNum, writeErr))
 			return
 		}
-		// Shift the buffer left by samplesPerFrame and append the new samples,
-		// zero-padding a short final read so stale samples never feed the FFT.
-		copy(fftBuffer, fftBuffer[samplesPerFrame:])
-		if nRead < samplesPerFrame {
-			copy(fftBuffer[config.FFTSize-samplesPerFrame:], newSamples[:nRead])
-			clear(fftBuffer[config.FFTSize-samplesPerFrame+nRead:])
-		} else {
-			copy(fftBuffer[config.FFTSize-samplesPerFrame:], newSamples[:nRead])
-		}
+		audio.SlideFFTWindow(fftBuffer, newSamples, nRead)
 		totalAudio += time.Since(t0)
 		// === AUDIO TIMING END ===
 	}
 
 	// Flush samples still in the FIFO after the last video frame is written.
 	if err := enc.FlushAudioEncoder(); err != nil {
-		cli.PrintError(fmt.Sprintf("error flushing audio: %v", err))
-		p.Quit()
+		fail(fmt.Errorf("flushing audio: %w", err))
 		return
 	}
 
+	// A Close failure is fatal: the trailer never lands and the file is
+	// truncated.
 	if err := enc.Close(); err != nil {
-		cli.PrintError(fmt.Sprintf("error closing encoder: %v", err))
-		p.Quit()
+		fail(fmt.Errorf("closing encoder: %w", err))
 		return
 	}
 

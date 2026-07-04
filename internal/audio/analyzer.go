@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/linuxmatters/jivefire/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
 )
 
 // FrameAnalysis holds statistics for a single frame.
@@ -119,12 +119,7 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 			return nil, fmt.Errorf("error reading audio at frame %d: %w", frameNum, err)
 		}
 
-		// Shift buffer left by samplesPerFrame, append new samples.
-		copy(fftBuffer, fftBuffer[samplesPerFrame:])
-		copy(fftBuffer[config.FFTSize-samplesPerFrame:], frameBuf[:nRead])
-		if nRead < samplesPerFrame {
-			clear(fftBuffer[config.FFTSize-samplesPerFrame+nRead:])
-		}
+		SlideFFTWindow(fftBuffer, frameBuf, nRead)
 	}
 
 	// Duration tracks the number of frames advanced, not total samples read; each

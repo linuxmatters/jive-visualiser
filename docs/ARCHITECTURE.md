@@ -51,9 +51,9 @@ FFmpeg Decoder (ffmpeg-statigo, streaming)
     ├─ libavcodec for decoding
     └─ Automatic stereo→mono downmix
     ↓
-FFT Analysis (gonum/fourier)
+FFT Analysis (FFmpeg av_tx RDFT via ffmpeg-statigo, internal/audio/fft.go)
     ├─ 2048-point Hanning window
-    ├─ Log-scale frequency binning → 64 bars
+    ├─ Linear frequency binning → 64 bars (binsPerBar = maxFreqBin / NumBars; log scaling applies to amplitude only)
     └─ Harmonica spring peak-hold dynamics (bars snap up, spring back down)
     ↓
 Frame Renderer (image/draw + custom optimizations)
@@ -171,5 +171,3 @@ There's currently no pure Go library offering parallelised colourspace conversio
 - WebRTC/streaming applications with real-time constraints
 
 The FIFO buffer implementation is generic enough for any audio frame size mismatch scenario in Go audio processing pipelines.
-
-FFT bar binning logic mirrors CAVA's approach, making it familiar territory for anyone who's worked with terminal audio visualisers.

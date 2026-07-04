@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/linuxmatters/jivefire/internal/theme"
+	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
 // Spectrum spring tuning. The delta time matches the UI tick cadence so each

@@ -8,7 +8,7 @@ import (
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
-	"github.com/linuxmatters/jivefire/internal/yuv"
+	"github.com/linuxmatters/jive-visualiser/internal/yuv"
 )
 
 // checkFFmpeg provides consistent error handling for FFmpeg API calls.
@@ -355,6 +355,21 @@ func (e *Encoder) Initialize() (err error) {
 	e.videoCodec.SetGopSize(e.config.Framerate * 2) // Keyframe every 2 seconds
 
 	e.videoStream.SetTimeBase(timeBase)
+
+	// internal/yuv converts with full-range BT.601 JFIF coefficients; untagged
+	// streams decode as limited-range BT.709, crushing blacks. Tag the stream
+	// before AVCodecOpen2 (so libx264 writes the VUI) and before
+	// AVCodecParametersFromContext (so codecpar carries the tags into the MP4).
+	// These tags are verified correct for the CPU-converted paths (software
+	// YUV420P and NV12 hardware upload, both via internal/yuv). The NVENC
+	// RGBA-direct path (writeFrameRGBADirect) converts on the GPU with an
+	// unverified matrix/range; no NVENC hardware was available to test. If
+	// NVENC output shows shifted colours, align the GPU conversion with these
+	// tags rather than changing the tags.
+	e.videoCodec.SetColorRange(ffmpeg.AVColRangeJpeg)
+	e.videoCodec.SetColorspace(ffmpeg.AVColSpcSmpte170M)
+	e.videoCodec.SetColorPrimaries(ffmpeg.AVColPriSmpte170M)
+	e.videoCodec.SetColorTrc(ffmpeg.AVColTrcSmpte170M)
 
 	var opts *ffmpeg.AVDictionary
 	defer ffmpeg.AVDictFree(&opts)
@@ -743,8 +758,9 @@ func (e *Encoder) writeFrameRGBASoftware(rgbaData []byte) error {
 	// Use pre-allocated YUV frame (configured in configurePixelFormat).
 	// Make writable as the encoder may still hold a reference from the previous frame.
 	yuvFrame := e.swYUVFrame
-	if ret, err := ffmpeg.AVFrameMakeWritable(yuvFrame); err != nil {
-		return checkFFmpeg(ret, err, "make YUV frame writable")
+	ret, err := ffmpeg.AVFrameMakeWritable(yuvFrame)
+	if err := checkFFmpeg(ret, err, "make YUV frame writable"); err != nil {
+		return err
 	}
 
 	// Convert RGBA directly to YUV420P (skips RGB24 intermediate)
@@ -755,7 +771,7 @@ func (e *Encoder) writeFrameRGBASoftware(rgbaData []byte) error {
 	e.nextVideoPts++
 
 	// Send frame to encoder
-	ret, err := ffmpeg.AVCodecSendFrame(e.videoCodec, yuvFrame)
+	ret, err = ffmpeg.AVCodecSendFrame(e.videoCodec, yuvFrame)
 	if err := checkFFmpeg(ret, err, "send frame to encoder"); err != nil {
 		return err
 	}
@@ -770,8 +786,9 @@ func (e *Encoder) writeFrameRGBADirect(rgbaData []byte) error {
 	// Use pre-allocated RGBA frame (configured in configurePixelFormat).
 	// Make writable as the encoder may still hold a reference from the previous frame.
 	rgbaFrame := e.rgbaFrame
-	if ret, err := ffmpeg.AVFrameMakeWritable(rgbaFrame); err != nil {
-		return checkFFmpeg(ret, err, "make RGBA frame writable")
+	ret, err := ffmpeg.AVFrameMakeWritable(rgbaFrame)
+	if err := checkFFmpeg(ret, err, "make RGBA frame writable"); err != nil {
+		return err
 	}
 
 	// Copy RGBA data to frame
@@ -794,7 +811,7 @@ func (e *Encoder) writeFrameRGBADirect(rgbaData []byte) error {
 	e.nextVideoPts++
 
 	// Send frame to encoder
-	ret, err := ffmpeg.AVCodecSendFrame(e.videoCodec, rgbaFrame)
+	ret, err = ffmpeg.AVCodecSendFrame(e.videoCodec, rgbaFrame)
 	if err := checkFFmpeg(ret, err, "send frame to encoder"); err != nil {
 		return err
 	}
@@ -806,7 +823,7 @@ func (e *Encoder) writeFrameRGBADirect(rgbaData []byte) error {
 // writeFrameHWUpload converts RGBA to NV12, uploads to GPU, and encodes
 // Pipeline: RGBA (CPU) → parallel Go conversion → NV12 (CPU) → AVHWFrameTransferData → GPU → encode
 // Used by Vulkan (h264_vulkan) and QSV (h264_qsv) encoders
-// Uses pre-allocated reusable NV12 frame and parallel Go conversion (8.4× faster than SwsScaleFrame)
+// Uses pre-allocated reusable NV12 frame and parallel Go conversion (13.2× faster than SwsScaleFrame)
 func (e *Encoder) writeFrameHWUpload(rgbaData []byte) error {
 	width := e.config.Width
 
@@ -1079,34 +1096,58 @@ func writeStereoFloats(frame *ffmpeg.AVFrame, samples []float32) error {
 }
 
 // Close finalizes the output file and frees resources.
+// Finalisation failures (flush, drain, trailer) are collected and returned as
+// a joined error; resource freeing continues regardless. A second call is a
+// no-op returning nil because every field is nilled on the first call.
 func (e *Encoder) Close() error {
-	// Flush the video encoder before writing the trailer.
+	var errs []error
+
+	// Flush the video encoder before writing the trailer. A failed flush
+	// truncates the output, so report it.
 	if e.videoCodec != nil && e.pkt != nil {
-		_, _ = ffmpeg.AVCodecSendFrame(e.videoCodec, nil)
+		ret, err := ffmpeg.AVCodecSendFrame(e.videoCodec, nil)
+		if err := checkFFmpeg(ret, err, "flush video encoder"); err != nil {
+			errs = append(errs, err)
+		}
 
 		// Drain remaining packets, reusing the shared e.pkt (freed once below).
+		// Break on any error other than EOF/EAGAIN so a persistent receive
+		// error cannot spin this loop forever.
 		pkt := e.pkt
 		for {
 			ret, err := ffmpeg.AVCodecReceivePacket(e.videoCodec, pkt)
-
 			if errors.Is(err, ffmpeg.AVErrorEOF) || errors.Is(err, ffmpeg.EAgain) {
 				break
 			}
+			if err := checkFFmpeg(ret, err, "receive flushed packet"); err != nil {
+				errs = append(errs, err)
+				break
+			}
 
-			if ret >= 0 {
-				pkt.SetStreamIndex(e.videoStream.Index())
-				ffmpeg.AVPacketRescaleTs(pkt, e.videoCodec.TimeBase(), e.videoStream.TimeBase())
-				_, _ = ffmpeg.AVInterleavedWriteFrame(e.formatCtx, pkt)
-				ffmpeg.AVPacketUnref(pkt)
+			pkt.SetStreamIndex(e.videoStream.Index())
+			ffmpeg.AVPacketRescaleTs(pkt, e.videoCodec.TimeBase(), e.videoStream.TimeBase())
+			ret, err = ffmpeg.AVInterleavedWriteFrame(e.formatCtx, pkt)
+			ffmpeg.AVPacketUnref(pkt)
+			if err := checkFFmpeg(ret, err, "write flushed packet"); err != nil {
+				errs = append(errs, err)
+				break
 			}
 		}
 	}
 
 	if e.formatCtx != nil {
-		_, _ = ffmpeg.AVWriteTrailer(e.formatCtx)
+		ret, err := ffmpeg.AVWriteTrailer(e.formatCtx)
+		if err := checkFFmpeg(ret, err, "write trailer"); err != nil {
+			errs = append(errs, err)
+		}
 
 		if e.formatCtx.Pb() != nil {
-			ffmpeg.AVIOClose(e.formatCtx.Pb())
+			// A failed close can drop buffered writes after a successful
+			// trailer, leaving a truncated file; surface it.
+			ret, err := ffmpeg.AVIOClose(e.formatCtx.Pb())
+			if err := checkFFmpeg(ret, err, "close output file"); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 
@@ -1165,5 +1206,5 @@ func (e *Encoder) Close() error {
 		e.formatCtx = nil
 	}
 
-	return nil
+	return errors.Join(errs...)
 }

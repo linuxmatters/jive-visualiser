@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/linuxmatters/jivefire/internal/config"
-	"github.com/linuxmatters/jivefire/internal/theme"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
 // TestRenderSpectrumUsesThemeRamp verifies renderSpectrum colours its bars from

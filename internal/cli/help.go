@@ -7,7 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 	"github.com/alecthomas/kong"
-	"github.com/linuxmatters/jivefire/internal/theme"
+	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
 // Custom help styles - fire theme

@@ -16,7 +16,7 @@ Your podcast audio deserves more than a static image on YouTube. Jive Visualiser
 - 🎬 **1280×720 @ 30fps** H.264/AAC YouTube-ready MP4, no questions asked
   - 🎚️ **64 frequency bars** that actually look discrete (not that smeared spectrum nonsense)
   - 🪞 **Symmetric mirroring** above and below centre, doubles the visual impact
-  - 🔬 **FFT-based analysis** 2048-point Hanning window, log scale frequency binning
+  - 🔬 **FFT-based analysis** 2048-point Hanning window, linear frequency binning, log-scaled amplitude
   - ✨ **Spring-driven bar dynamics** bars snap up instantly, spring back down via harmonica peak-hold
 - 🚀 **Stupidly fast** streaming pipeline, parallel RGB→YUV conversion
   - ⚡ **GPU acceleration** auto-detected: NVENC, Vulkan, VA-API, QuickSync, VideoToolbox
