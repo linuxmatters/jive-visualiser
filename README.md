@@ -1,12 +1,14 @@
-# Jivefire 🔥
+# Jive Visualiser 🔥
 
 > Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies.
 
+_Formerly known as Jivefire._
+
 ## The Groove
 
-Your podcast audio deserves more than a static image on YouTube. Jivefire transforms WAV/MP3/FLAC into delightful 720p visuals—bars that breathe with your dialogue, rise with your laughter, and groove through every frequency.
+Your podcast audio deserves more than a static image on YouTube. Jive Visualiser transforms WAV/MP3/FLAC into delightful 720p visuals—bars that breathe with your dialogue, rise with your laughter, and groove through every frequency.
 
-<div align="center"><img alt="Jivefire Demo" src=".github/jivefire.gif" width="860" /></div>
+<div align="center"><img alt="Jive Visualiser Demo" src=".github/jive-visualiser.gif" width="860" /></div>
 
 ### What's Cooking
 
@@ -26,17 +28,17 @@ Your podcast audio deserves more than a static image on YouTube. Jivefire transf
 
 ### Generate Video
 ```bash
-./jivefire input.wav output.mp4
+./jive-visualiser input.wav output.mp4
 ```
 
 ### With Episode Number and Title
 ```bash
-./jivefire --episode=42 --title="Linux Matters" input.wav output.mp4
+./jive-visualiser --episode=42 --title="Linux Matters" input.wav output.mp4
 ```
 
 ### Without Episode Number (unnumbered audio)
 ```bash
-./jivefire --title="Linux Matters" input.wav output.mp4
+./jive-visualiser --title="Linux Matters" input.wav output.mp4
 ```
 
 `--episode` is optional. Omitting it suppresses the episode number overlay entirely — useful for archive or bonus audio that has no episode number. Passing `--episode=0` still renders `00` on-screen (single-digit values are zero-padded, so `5` renders as `05`); absence is what controls the overlay, not the value.
@@ -51,7 +53,7 @@ Your podcast audio deserves more than a static image on YouTube. Jivefire transf
 
 ## Build
 
-Jivefire uses [ffmpeg-statigo](https://github.com/linuxmatters/ffmpeg-statigo) for FFmpeg static bindings.
+Jive Visualiser uses [ffmpeg-statigo](https://github.com/linuxmatters/ffmpeg-statigo) for FFmpeg static bindings.
 
 ```bash
 # Setup or update ffmpeg-statigo submodule and library
@@ -63,10 +65,10 @@ just test         # Run tests
 just test-encoder # Test encoder
 ```
 
-## Why Jivefire?
+## Why Jive Visualiser?
 
 FFmpeg's audio visualisation filters (`showfreqs`, `showspectrum`) render continuous frequency spectra, not discrete bars. No amount of FFmpeg filter chain kung-fu can achieve the discrete 64-bar aesthetic required for Linux Matters branding. Solution: Do the FFT analysis and bar rendering in Go, pipe frames to FFmpeg for encoding.
 
 **Why Go over Python?** The original `djfun/audio-visualizer-python` tool is a moribund Qt5 GUI with significant tech debt. For our podcast production needs we wanted multi-archtitecture tools that's that can integrate into automation pipelines.
 
-The Jivefire architecture, such as it is, is available in the [ARCHITECTURE.md](docs/ARCHITECTURE.md) document.
+The Jive Visualiser architecture, such as it is, is available in the [ARCHITECTURE.md](docs/ARCHITECTURE.md) document.

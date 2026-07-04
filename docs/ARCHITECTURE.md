@@ -1,4 +1,4 @@
-# Jivefire Architecture
+# Jive Visualiser Architecture
 
 **TL;DR:** 2-pass streaming audio visualiser that generates broadcast-ready MP4s from podcast audio. FFmpeg-based audio decoding + ffmpeg-statigo static linking = single deployable binary with broad format support.
 
@@ -140,7 +140,7 @@ Preview renders via Unicode blocks (`▁▂▃▄▅▆▇█`) using actual bar
 ## File Structure
 
 ```
-cmd/jivefire/main.go         → CLI entry, 2-pass coordinator
+cmd/jive-visualiser/main.go  → CLI entry, 2-pass coordinator
 internal/audio/              → StreamingReader (chunk-based FFmpeg decode), FFT analysis
 internal/encoder/            → ffmpeg-statigo wrapper, RGB→YUV conversion, FIFO buffer
   ├─ encoder.go              → Video/audio encoding, frame submission

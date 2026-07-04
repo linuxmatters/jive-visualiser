@@ -34,7 +34,6 @@
               golangci-lint
               ineffassign
               just
-              vhs
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
               vulkan-loader # Required for Vulkan accelerated encoders on Linux

@@ -212,15 +212,15 @@ jobs:
         run: |
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building jivefire $VERSION for ${{ matrix.os }}/${{ matrix.arch }}"
+          echo "Building jive-visualiser $VERSION for ${{ matrix.os }}/${{ matrix.arch }}"
       - name: Build binary
         run: |
-          go build -ldflags="-X main.version=${{ steps.version.outputs.version }}" -o jivefire-${{ matrix.os }}-${{ matrix.arch }} ./cmd/jivefire
+          go build -ldflags="-X main.version=${{ steps.version.outputs.version }}" -o jive-visualiser-${{ matrix.os }}-${{ matrix.arch }} ./cmd/jive-visualiser
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: jivefire-${{ matrix.os }}-${{ matrix.arch }}
-          path: jivefire-${{ matrix.os }}-${{ matrix.arch }}
+          name: jive-visualiser-${{ matrix.os }}-${{ matrix.arch }}
+          path: jive-visualiser-${{ matrix.os }}-${{ matrix.arch }}
 
   release:
     name: Release 📦
@@ -257,12 +257,12 @@ jobs:
 
           ```bash
           # Linux (amd64)
-          chmod +x jivefire-linux-amd64
-          sudo mv jivefire-linux-amd64 /usr/local/bin/jivefire
+          chmod +x jive-visualiser-linux-amd64
+          sudo mv jive-visualiser-linux-amd64 /usr/local/bin/jive-visualiser
 
           # macOS (Apple Silicon)
-          chmod +x jivefire-darwin-arm64
-          sudo mv jivefire-darwin-arm64 /usr/local/bin/jivefire
+          chmod +x jive-visualiser-darwin-arm64
+          sudo mv jive-visualiser-darwin-arm64 /usr/local/bin/jive-visualiser
           ```
 
           ## Checksums
@@ -275,7 +275,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: artifacts
-          pattern: jivefire-*
+          pattern: jive-visualiser-*
           merge-multiple: false
       - name: Create release
         uses: softprops/action-gh-release@v3
@@ -283,8 +283,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          name: Jivefire ${{ steps.version.outputs.version }}
+          name: Jive Visualiser ${{ steps.version.outputs.version }}
           body_path: CHANGELOG.md
           draft: false
           prerelease: false
-          files: artifacts/jivefire-*/jivefire-*
+          files: artifacts/jive-visualiser-*/jive-visualiser-*
