@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/linuxmatters/jivefire/internal/theme"
+	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
 // TestSparklineEmpty verifies an empty series renders nothing rather than

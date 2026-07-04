@@ -6,7 +6,7 @@ import (
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
-	"github.com/linuxmatters/jivefire/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
 )
 
 // avComplexFloat mirrors C's AVComplexFloat: two contiguous 32-bit floats with

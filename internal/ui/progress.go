@@ -14,8 +14,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/harmonica"
-	"github.com/linuxmatters/jivefire/internal/config"
-	"github.com/linuxmatters/jivefire/internal/theme"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
 // Phase represents the current processing phase
@@ -80,6 +80,11 @@ type RenderComplete struct {
 	// the completion signal, so the caller reads them from the final model after
 	// p.Run() returns without a data race on a shared slice.
 	AssetWarnings []string
+
+	// Err carries a fatal Pass 2 error. Like AssetWarnings, it crosses the same
+	// channel as the completion signal and is read from the final model after
+	// p.Run() returns, so no extra synchronisation is needed.
+	Err error
 }
 
 // AudioProfile holds the audio analysis results for display
@@ -356,6 +361,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.complete = &msg
 		m.phase = PhaseComplete
 
+		// On error, quit at once; the completion delay only shows the success view.
+		if msg.Err != nil {
+			return m, tea.Quit
+		}
+
 		return m, tea.Tick(m.completionDelay, func(t time.Time) tea.Msg {
 			return progressQuitMsg{}
 		})
@@ -421,10 +431,19 @@ func (m *Model) View() tea.View {
 // CompletionSummary returns the final completion summary for printing after alt screen exits.
 // Returns empty string if encoding is not complete.
 func (m *Model) CompletionSummary() string {
-	if m.complete == nil {
+	if m.complete == nil || m.complete.Err != nil {
 		return ""
 	}
 	return m.renderFinalProgress() + "\n" + m.renderComplete()
+}
+
+// RenderError returns the fatal error delivered with the RenderComplete
+// message, or nil if Pass 2 did not complete or succeeded.
+func (m *Model) RenderError() error {
+	if m.complete == nil {
+		return nil
+	}
+	return m.complete.Err
 }
 
 // AssetWarnings returns the non-fatal asset-load warnings delivered with the

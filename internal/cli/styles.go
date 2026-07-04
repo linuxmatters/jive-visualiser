@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"charm.land/lipgloss/v2"
-	"github.com/linuxmatters/jivefire/internal/theme"
+	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
 // Styles

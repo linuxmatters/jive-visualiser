@@ -5,7 +5,7 @@ import (
 	"image"
 	"image/color"
 
-	"github.com/linuxmatters/jivefire/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
 	"golang.org/x/image/font"
 )
 
@@ -151,8 +151,8 @@ func (f *Frame) drawBars(barHeights []float64) {
 	// operations to fill the remaining 3/4 of the bars within the same iteration.
 	// The mirrors read only pixels written by renderBar earlier in this iteration
 	// (the left upward bar), so merging the former render/mirror loops keeps output
-	// identical. The clamped barHeight feeds renderBar; the mirrors derive yStart
-	// from the unclamped barHeight, matching the original mirror loop.
+	// identical. The clamped barHeight feeds both renderBar and the mirrors, so
+	// render and mirror share the same geometry.
 	halfBars := config.NumBars / 2
 	for i := range halfBars {
 		barHeight := int(barHeights[i])
@@ -170,14 +170,14 @@ func (f *Frame) drawBars(barHeights []float64) {
 		// Render upward bar (left half) with the clamped height - always opaque,
 		// no background blending needed.
 		clampedHeight := min(barHeight, f.maxBarHeight)
-		f.renderBar(xLeft, f.centerY-clampedHeight-config.CenterGap/2, yEnd, clampedHeight, pixelPattern)
+		yStart := f.centerY - clampedHeight - config.CenterGap/2
+		f.renderBar(xLeft, yStart, yEnd, clampedHeight, pixelPattern)
 
-		// Mirror using the unclamped barHeight, matching the original mirror loop:
+		// Mirror using the same clamped geometry as renderBar:
 		// 1. Vertical mirror → left-side downward bar
 		// 2. Horizontal mirror → right-side upward bar
 		// 3. Both mirrors → right-side downward bar
 		xRight := f.startX + (config.NumBars-1-i)*(config.BarWidth+config.BarGap)
-		yStart := f.centerY - barHeight - config.CenterGap/2
 
 		f.mirrorBarVertical(xLeft, yStart, yEnd)
 		f.mirrorBarHorizontal(xLeft, xRight, yStart, yEnd)

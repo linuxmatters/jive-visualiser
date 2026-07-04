@@ -1,12 +1,13 @@
 package encoder
 
 // =============================================================================
-// RGB→YUV420P Colourspace Conversion Benchmark
+// RGBA→YUV420P Colourspace Conversion Benchmark
 // =============================================================================
 //
-// This benchmark compares two approaches for converting RGB24 frames to YUV420P:
+// This benchmark compares two approaches for converting RGBA frames to YUV420P:
 //
 //   1. Go Implementation (parallelised)
+//      - The production hot path: convertRGBAToYUV over a yuv.RowPool
 //      - Uses goroutines to process row groups across CPU cores
 //      - ITU-R BT.601 coefficients matching Go's color package
 //      - Located in encoder/frame.go
@@ -19,8 +20,8 @@ package encoder
 // Run with: just bench-yuv
 //
 // Expected results on multi-core systems:
-//   - Go implementation is ~8× faster due to parallelisation
-//   - swscale has zero allocations but can't leverage multiple cores
+//   - Go implementation is several times faster due to parallelisation
+//   - swscale has zero allocations but cannot use multiple cores
 //
 // =============================================================================
 
@@ -31,7 +32,7 @@ import (
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
-	"github.com/linuxmatters/jivefire/internal/yuv"
+	"github.com/linuxmatters/jive-visualiser/internal/yuv"
 )
 
 const (
@@ -39,43 +40,7 @@ const (
 	benchHeight = 720
 )
 
-// convertRGBToYUVGo converts RGB24 frames to YUV420P using the production
-// yuv-package conversion primitives, so the benchmark measures the current
-// hot-path maths rather than a stale copy.
-func convertRGBToYUVGo(rgbData []byte, yuvFrame *ffmpeg.AVFrame, width, height int) {
-	yPlane := yuvFrame.Data().Get(0)
-	uPlane := yuvFrame.Data().Get(1)
-	vPlane := yuvFrame.Data().Get(2)
-
-	yLinesize := yuvFrame.Linesize().Get(0)
-	uLinesize := yuvFrame.Linesize().Get(1)
-	vLinesize := yuvFrame.Linesize().Get(2)
-
-	yuv.ParallelRows(height, func(startY, endY int) {
-		for y := startY; y < endY; y++ {
-			yPtr := unsafe.Add(yPlane, y*yLinesize)
-			rgbIdx := y * width * 3
-
-			for x := range width {
-				r := int32(rgbData[rgbIdx])
-				g := int32(rgbData[rgbIdx+1])
-				b := int32(rgbData[rgbIdx+2])
-				rgbIdx += 3
-
-				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
-
-				if (y&1) == 0 && (x&1) == 0 {
-					uvY := y >> 1
-					uvX := x >> 1
-					*(*uint8)(unsafe.Add(uPlane, uvY*uLinesize+uvX)) = yuv.RGBToCb(r, g, b)
-					*(*uint8)(unsafe.Add(vPlane, uvY*vLinesize+uvX)) = yuv.RGBToCr(r, g, b)
-				}
-			}
-		}
-	})
-}
-
-// SwsConverter wraps FFmpeg's swscale for RGB24 → YUV420P conversion
+// SwsConverter wraps FFmpeg's swscale for RGBA → YUV420P conversion
 type SwsConverter struct {
 	swsCtx   *ffmpeg.SwsContext
 	srcFrame *ffmpeg.AVFrame
@@ -92,7 +57,7 @@ func NewSwsConverter(width, height int) (*SwsConverter, error) {
 	// Configure the scaler
 	swsCtx.SetSrcW(width)
 	swsCtx.SetSrcH(height)
-	swsCtx.SetSrcFormat(int(ffmpeg.AVPixFmtRgb24))
+	swsCtx.SetSrcFormat(int(ffmpeg.AVPixFmtRgba))
 	swsCtx.SetDstW(width)
 	swsCtx.SetDstH(height)
 	swsCtx.SetDstFormat(int(ffmpeg.AVPixFmtYuv420P))
@@ -104,14 +69,26 @@ func NewSwsConverter(width, height int) (*SwsConverter, error) {
 		return nil, err
 	}
 
-	// Allocate source frame for RGB data
+	// The Go path uses full-range BT.601 (Go's colour package), but swscale
+	// defaults to limited-range YUV output. Request full-range output so the
+	// two implementations differ only by rounding.
+	invTable, srcRange, table, _, brightness, contrast, saturation, err := ffmpeg.SwsGetColorspaceDetails(swsCtx)
+	if err != nil {
+		return nil, err
+	}
+	ret, err = ffmpeg.SwsSetColorspaceDetails(swsCtx, invTable, srcRange, table, 1, brightness, contrast, saturation)
+	if err != nil || ret < 0 {
+		return nil, err
+	}
+
+	// Allocate source frame for RGBA data
 	srcFrame := ffmpeg.AVFrameAlloc()
 	if srcFrame == nil {
 		return nil, nil
 	}
 	srcFrame.SetWidth(width)
 	srcFrame.SetHeight(height)
-	srcFrame.SetFormat(int(ffmpeg.AVPixFmtRgb24))
+	srcFrame.SetFormat(int(ffmpeg.AVPixFmtRgba))
 
 	ret, err = ffmpeg.AVFrameGetBuffer(srcFrame, 0)
 	if err != nil || ret < 0 {
@@ -127,16 +104,16 @@ func NewSwsConverter(width, height int) (*SwsConverter, error) {
 	}, nil
 }
 
-func (c *SwsConverter) Convert(rgbData []byte, dstFrame *ffmpeg.AVFrame) error {
-	// Copy RGB data into source frame
+func (c *SwsConverter) Convert(rgbaData []byte, dstFrame *ffmpeg.AVFrame) error {
+	// Copy RGBA data into source frame
 	srcLinesize := c.srcFrame.Linesize().Get(0)
 	srcData := c.srcFrame.Data().Get(0)
 
 	for y := 0; y < c.height; y++ {
 		srcOffset := y * srcLinesize
-		rgbOffset := y * c.width * 3
-		for x := 0; x < c.width*3; x++ {
-			*(*uint8)(unsafe.Add(srcData, srcOffset+x)) = rgbData[rgbOffset+x]
+		rgbaOffset := y * c.width * 4
+		for x := 0; x < c.width*4; x++ {
+			*(*uint8)(unsafe.Add(srcData, srcOffset+x)) = rgbaData[rgbaOffset+x]
 		}
 	}
 
@@ -155,63 +132,7 @@ func (c *SwsConverter) Close() {
 }
 
 func createTestFrames() ([]byte, *ffmpeg.AVFrame) {
-	// Create RGB test data with some pattern
-	rgbSize := benchWidth * benchHeight * 3
-	rgbData := make([]byte, rgbSize)
-	for i := 0; i < rgbSize; i += 3 {
-		rgbData[i] = uint8(i % 256)   // R
-		rgbData[i+1] = uint8(i % 128) // G
-		rgbData[i+2] = uint8(i % 64)  // B
-	}
-
-	// Allocate YUV frame
-	yuvFrame := ffmpeg.AVFrameAlloc()
-	yuvFrame.SetWidth(benchWidth)
-	yuvFrame.SetHeight(benchHeight)
-	yuvFrame.SetFormat(int(ffmpeg.AVPixFmtYuv420P))
-	_, _ = ffmpeg.AVFrameGetBuffer(yuvFrame, 0)
-
-	return rgbData, yuvFrame
-}
-
-// =============================================================================
-// Benchmarks
-// =============================================================================
-
-// BenchmarkGoRGBToYUV measures the parallelised Go implementation.
-// This is the production code path used by Jive Visualiser.
-func BenchmarkGoRGBToYUV(b *testing.B) {
-	rgbData, yuvFrame := createTestFrames()
-	defer ffmpeg.AVFrameFree(&yuvFrame)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		convertRGBToYUVGo(rgbData, yuvFrame, benchWidth, benchHeight)
-	}
-}
-
-// BenchmarkSwscaleRGBToYUV measures FFmpeg's swscale library.
-// Single-threaded but SIMD-optimised.
-func BenchmarkSwscaleRGBToYUV(b *testing.B) {
-	rgbData, yuvFrame := createTestFrames()
-	defer ffmpeg.AVFrameFree(&yuvFrame)
-
-	converter, err := NewSwsConverter(benchWidth, benchHeight)
-	if err != nil {
-		b.Fatalf("Failed to create sws converter: %v", err)
-	}
-	defer converter.Close()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = converter.Convert(rgbData, yuvFrame)
-	}
-}
-
-// BenchmarkRGBAToYUVDirect measures the direct RGBA→YUV420P conversion.
-// This skips the intermediate RGB24 buffer for software encoding path.
-func BenchmarkRGBAToYUVDirect(b *testing.B) {
-	// Create RGBA test data
+	// Create RGBA test data with some pattern
 	rgbaSize := benchWidth * benchHeight * 4
 	rgbaData := make([]byte, rgbaSize)
 	for i := 0; i < rgbaSize; i += 4 {
@@ -227,6 +148,19 @@ func BenchmarkRGBAToYUVDirect(b *testing.B) {
 	yuvFrame.SetHeight(benchHeight)
 	yuvFrame.SetFormat(int(ffmpeg.AVPixFmtYuv420P))
 	_, _ = ffmpeg.AVFrameGetBuffer(yuvFrame, 0)
+
+	return rgbaData, yuvFrame
+}
+
+// =============================================================================
+// Benchmarks
+// =============================================================================
+
+// BenchmarkGoRGBAToYUV measures the parallelised Go implementation.
+// This is the production code path used by Jive Visualiser: convertRGBAToYUV
+// over a persistent yuv.RowPool.
+func BenchmarkGoRGBAToYUV(b *testing.B) {
+	rgbaData, yuvFrame := createTestFrames()
 	defer ffmpeg.AVFrameFree(&yuvFrame)
 
 	pool := yuv.NewRowPool(benchHeight)
@@ -238,18 +172,38 @@ func BenchmarkRGBAToYUVDirect(b *testing.B) {
 	}
 }
 
+// BenchmarkSwscaleRGBAToYUV measures FFmpeg's swscale library.
+// Single-threaded but SIMD-optimised.
+func BenchmarkSwscaleRGBAToYUV(b *testing.B) {
+	rgbaData, yuvFrame := createTestFrames()
+	defer ffmpeg.AVFrameFree(&yuvFrame)
+
+	converter, err := NewSwsConverter(benchWidth, benchHeight)
+	if err != nil {
+		b.Fatalf("Failed to create sws converter: %v", err)
+	}
+	defer converter.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = converter.Convert(rgbaData, yuvFrame)
+	}
+}
+
 // TestConversionEquivalence verifies both implementations produce similar output.
 // Some pixel differences are expected due to different rounding in coefficient
 // implementations (Go uses integer arithmetic, FFmpeg uses floating-point).
 func TestConversionEquivalence(t *testing.T) {
-	rgbData, yuvFrameGo := createTestFrames()
+	rgbaData, yuvFrameGo := createTestFrames()
 	defer ffmpeg.AVFrameFree(&yuvFrameGo)
 
 	_, yuvFrameSws := createTestFrames()
 	defer ffmpeg.AVFrameFree(&yuvFrameSws)
 
-	// Convert with Go implementation
-	convertRGBToYUVGo(rgbData, yuvFrameGo, benchWidth, benchHeight)
+	// Convert with the production Go implementation
+	pool := yuv.NewRowPool(benchHeight)
+	defer pool.Close()
+	convertRGBAToYUV(pool, rgbaData, yuvFrameGo, benchWidth)
 
 	// Convert with swscale
 	converter, err := NewSwsConverter(benchWidth, benchHeight)
@@ -258,7 +212,7 @@ func TestConversionEquivalence(t *testing.T) {
 	}
 	defer converter.Close()
 
-	err = converter.Convert(rgbData, yuvFrameSws)
+	err = converter.Convert(rgbaData, yuvFrameSws)
 	if err != nil {
 		t.Fatalf("Swscale conversion failed: %v", err)
 	}
@@ -267,6 +221,10 @@ func TestConversionEquivalence(t *testing.T) {
 	yLinesize := yuvFrameGo.Linesize().Get(0)
 	yPlaneGo := yuvFrameGo.Data().Get(0)
 	yPlaneSws := yuvFrameSws.Data().Get(0)
+
+	// BT.601 integer arithmetic vs swscale floating-point permits a
+	// per-sample difference of at most 1.
+	const tolerance = 1
 
 	diffCount := 0
 	maxDiff := 0
@@ -279,16 +237,23 @@ func TestConversionEquivalence(t *testing.T) {
 			if diff < 0 {
 				diff = -diff
 			}
-			if diff > 1 { // Allow 1 unit difference for rounding
+			if diff > maxDiff {
+				maxDiff = diff
+			}
+			if diff > tolerance {
 				diffCount++
-				if diff > maxDiff {
-					maxDiff = diff
-				}
 			}
 		}
 	}
 
-	t.Logf("Y plane differences > 1: %d pixels (max diff: %d)", diffCount, maxDiff)
+	t.Logf("Y plane differences > %d: %d pixels (max diff: %d)", tolerance, diffCount, maxDiff)
+
+	if maxDiff > tolerance {
+		t.Errorf("max Y plane difference %d exceeds tolerance %d", maxDiff, tolerance)
+	}
+	if diffCount > 0 {
+		t.Errorf("%d Y plane samples differ by more than %d", diffCount, tolerance)
+	}
 }
 
 // =============================================================================
@@ -302,13 +267,16 @@ func TestBenchmarkSummary(t *testing.T) {
 		t.Skip("Skipping summary in short mode")
 	}
 
-	rgbData, yuvFrame := createTestFrames()
+	rgbaData, yuvFrame := createTestFrames()
 	defer ffmpeg.AVFrameFree(&yuvFrame)
 
-	// Benchmark Go implementation
+	// Benchmark the production Go implementation
+	pool := yuv.NewRowPool(benchHeight)
+	defer pool.Close()
+
 	goStart := testing.Benchmark(func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			convertRGBToYUVGo(rgbData, yuvFrame, benchWidth, benchHeight)
+			convertRGBAToYUV(pool, rgbaData, yuvFrame, benchWidth)
 		}
 	})
 
@@ -321,7 +289,7 @@ func TestBenchmarkSummary(t *testing.T) {
 
 	swsStart := testing.Benchmark(func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = converter.Convert(rgbData, yuvFrame)
+			_ = converter.Convert(rgbaData, yuvFrame)
 		}
 	})
 
@@ -331,7 +299,7 @@ func TestBenchmarkSummary(t *testing.T) {
 
 	fmt.Println()
 	fmt.Println("╭───────────────────────────────────────────────────────────────╮")
-	fmt.Println("│          RGB→YUV420P Colourspace Conversion Benchmark         │")
+	fmt.Println("│         RGBA→YUV420P Colourspace Conversion Benchmark         │")
 	fmt.Println("├───────────────────────────────────────────────────────────────┤")
 	fmt.Printf("│  Resolution:     %d×%d (%.1f megapixels)                    │\n", benchWidth, benchHeight, float64(benchWidth*benchHeight)/1e6)
 	fmt.Printf("│  CPU cores:      %-2d                                           │\n", runtime.NumCPU())

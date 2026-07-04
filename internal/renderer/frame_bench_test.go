@@ -4,7 +4,7 @@ import (
 	"image"
 	"testing"
 
-	"github.com/linuxmatters/jivefire/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
 	"golang.org/x/image/font/basicfont"
 )
 
@@ -98,20 +98,7 @@ func TestFrameRendering(t *testing.T) {
 			img.Bounds().Dx(), img.Bounds().Dy(), config.Width, config.Height)
 	}
 
-	// Check that bars were drawn (center should have bar color)
-	centerY := config.Height / 2
-
-	// Find a bar position
-	totalWidth := config.NumBars*config.BarWidth + (config.NumBars-1)*config.BarGap
-	startX := (config.Width - totalWidth) / 2
-
-	// Check first bar area
-	barX := startX + config.BarWidth/2
-	offset := centerY*img.Stride + barX*4
-
-	// Should see bar color (red) or background depending on bar height
-	r := img.Pix[offset]
-	if r != config.BarColorR && r != uint8(barX%256) {
-		t.Errorf("Unexpected color at bar position: got R=%d", r)
-	}
+	// Bar-pixel colour assertions live in frame_test.go (TestBarPixelColour).
+	// The old check here sampled centerY, inside CenterGap where no bar is
+	// drawn, with a fallback that made it near-unfalsifiable.
 }

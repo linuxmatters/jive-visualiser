@@ -1,11 +1,88 @@
 package audio
 
 import (
+	"bytes"
+	"encoding/binary"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/linuxmatters/jivefire/internal/config"
+	"github.com/linuxmatters/jive-visualiser/internal/config"
 )
+
+// Sine fixture parameters. The frequency sits exactly on FFT bin 20 of a
+// 2048-point transform at 44.1 kHz, so every analysis window sees an
+// identical spectrum and the measured values below are deterministic.
+const (
+	sineAmplitude = 0.5
+	sineFrequency = 20.0 * float64(config.SampleRate) / float64(config.FFTSize)
+	sineSeconds   = 1
+)
+
+// Pre-computed fixture expectations for the sine WAV. These are literal
+// values recorded from one reference run of the analysis pipeline, plus the
+// analytical RMS of a 0.5-amplitude sine (0.5/sqrt(2)). They are NOT derived
+// from the code's formulas at test time, so a formula change in the analyser
+// (for example the 0.85 headroom constant) fails these tests.
+const (
+	sineExpectedPeak         = 41.6907  // measured raw bar magnitude
+	sineExpectedRMS          = 0.35355  // 0.5 / sqrt(2), analytical
+	sineExpectedBaseScale    = 0.020388 // 0.85 headroom / 41.6907 peak, pre-computed
+	sineExpectedDynamicRange = 118.55   // 41.6907 peak / 0.351687 measured RMS, pre-computed
+)
+
+// writeSineWAV writes a mono 16-bit PCM WAV containing the fixture sine and
+// returns its path.
+func writeSineWAV(t *testing.T) string {
+	t.Helper()
+
+	// Constant expression, so the uint32 conversions below are checked at
+	// compile time.
+	const numSamples = config.SampleRate * sineSeconds
+	const dataSize = uint32(numSamples * 2)
+	samples := make([]int16, numSamples)
+	for i := range samples {
+		v := sineAmplitude * math.Sin(2*math.Pi*sineFrequency*float64(i)/float64(config.SampleRate))
+		samples[i] = int16(v * 32767)
+	}
+
+	var buf bytes.Buffer
+	write := func(v any) {
+		if err := binary.Write(&buf, binary.LittleEndian, v); err != nil {
+			t.Fatalf("writing WAV field: %v", err)
+		}
+	}
+	buf.WriteString("RIFF")
+	write(36 + dataSize)
+	buf.WriteString("WAVEfmt ")
+	write(uint32(16))                    // fmt chunk size
+	write(uint16(1))                     // PCM
+	write(uint16(1))                     // mono
+	write(uint32(config.SampleRate))     // sample rate
+	write(uint32(config.SampleRate * 2)) // byte rate
+	write(uint16(2))                     // block align
+	write(uint16(16))                    // bits per sample
+	buf.WriteString("data")
+	write(dataSize)
+	write(samples)
+
+	path := filepath.Join(t.TempDir(), "sine.wav")
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("writing sine fixture: %v", err)
+	}
+	return path
+}
+
+// analyzeSineFixture runs the analyser over the deterministic sine fixture.
+func analyzeSineFixture(t *testing.T) *Profile {
+	t.Helper()
+	profile, err := AnalyzeAudio(writeSineWAV(t), nil)
+	if err != nil {
+		t.Fatalf("Failed to analyse sine fixture: %v", err)
+	}
+	return profile
+}
 
 func mustAnalyze(t *testing.T) *Profile {
 	t.Helper()
@@ -64,41 +141,48 @@ func TestAnalyzeAudioInvalidFile(t *testing.T) {
 }
 
 func TestOptimalBaseScaleCalculation(t *testing.T) {
-	profile := mustAnalyze(t)
+	profile := analyzeSineFixture(t)
 
-	// Optimal baseScale should be calculated as: 0.85 / GlobalPeak
-	expectedBaseScale := 0.85 / profile.GlobalPeak
-
-	if profile.OptimalBaseScale != expectedBaseScale {
-		t.Errorf("OptimalBaseScale mismatch: expected %.6f, got %.6f",
-			expectedBaseScale, profile.OptimalBaseScale)
+	// The fixture spectrum is deterministic, so the global peak must match the
+	// recorded reference value.
+	if !withinRelative(profile.GlobalPeak, sineExpectedPeak, 0.002) {
+		t.Errorf("GlobalPeak mismatch: expected ~%.6f, got %.6f",
+			sineExpectedPeak, profile.GlobalPeak)
 	}
 
-	// When multiplied by GlobalPeak and sensitivity 1.0, should give ~0.85
-	testValue := profile.GlobalPeak * profile.OptimalBaseScale * 1.0
-	if testValue < 0.84 || testValue > 0.86 {
-		t.Errorf("OptimalBaseScale validation failed: GlobalPeak * OptimalBaseScale = %.6f (expected ~0.85)", testValue)
+	// Assert against the pre-computed literal, not a formula recomputed here.
+	if !withinRelative(profile.OptimalBaseScale, sineExpectedBaseScale, 0.002) {
+		t.Errorf("OptimalBaseScale mismatch: expected ~%.6f, got %.6f",
+			sineExpectedBaseScale, profile.OptimalBaseScale)
 	}
 
-	t.Logf("OptimalBaseScale correctly calculated: %.6f", profile.OptimalBaseScale)
-	t.Logf("Verification: GlobalPeak (%.6f) × OptimalBaseScale (%.6f) = %.6f",
-		profile.GlobalPeak, profile.OptimalBaseScale, testValue)
+	t.Logf("GlobalPeak: %.6f, OptimalBaseScale: %.6f",
+		profile.GlobalPeak, profile.OptimalBaseScale)
 }
 
 func TestDynamicRangeCalculation(t *testing.T) {
-	profile := mustAnalyze(t)
+	profile := analyzeSineFixture(t)
 
-	expectedDynamicRange := profile.GlobalPeak / profile.GlobalRMS
-
-	// Allow small floating point error
-	diff := profile.DynamicRange - expectedDynamicRange
-	if diff < -0.01 || diff > 0.01 {
-		t.Errorf("DynamicRange (%.2f) doesn't match GlobalPeak/GlobalRMS (%.2f)",
-			profile.DynamicRange, expectedDynamicRange)
+	// A 0.5-amplitude sine has RMS 0.5/sqrt(2) ~= 0.35355. The last few frames
+	// include zero padding at end of file, hence the loose tolerance.
+	if !withinRelative(profile.GlobalRMS, sineExpectedRMS, 0.01) {
+		t.Errorf("GlobalRMS mismatch: expected ~%.5f, got %.6f",
+			sineExpectedRMS, profile.GlobalRMS)
 	}
 
-	t.Logf("DynamicRange correctly calculated: %.2f (Peak %.6f / RMS %.6f)",
+	// Assert against the pre-computed literal, not a formula recomputed here.
+	if !withinRelative(profile.DynamicRange, sineExpectedDynamicRange, 0.01) {
+		t.Errorf("DynamicRange mismatch: expected ~%.4f, got %.4f",
+			sineExpectedDynamicRange, profile.DynamicRange)
+	}
+
+	t.Logf("DynamicRange: %.4f (Peak %.6f / RMS %.6f)",
 		profile.DynamicRange, profile.GlobalPeak, profile.GlobalRMS)
+}
+
+// withinRelative reports whether got is within tol (relative) of want.
+func withinRelative(got, want, tol float64) bool {
+	return math.Abs(got-want) <= tol*math.Abs(want)
 }
 
 func TestAnalyzeFrameDirectly(t *testing.T) {
@@ -112,6 +196,7 @@ func TestAnalyzeFrameDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer processor.Close()
 	coeffs := processor.ProcessChunk(testSamples)
 
 	analysis := analyzeFrame(coeffs, testSamples, nil)

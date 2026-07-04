@@ -42,6 +42,7 @@ func TestBinFFT_KnownSineWave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer processor.Close()
 	fftInput := processor.ProcessChunk(windowSamples)
 
 	// Bin the FFT results into 64 bars
@@ -166,6 +167,7 @@ func TestBinFFT_NoiseGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer processor.Close()
 	fftInput := processor.ProcessChunk(quietSignal)
 
 	result := make([]float64, numBars)
@@ -209,6 +211,7 @@ func TestBinFFT_EnergyDistribution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer processor.Close()
 	fftInput := processor.ProcessChunk(signal)
 
 	result := make([]float64, numBars)
@@ -503,6 +506,7 @@ func BenchmarkProcessChunk(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	defer processor.Close()
 
 	// Generate test audio (random-ish data simulating real audio)
 	samples := make([]float64, 2048)
