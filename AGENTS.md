@@ -19,7 +19,7 @@
 - Memory-efficient: ~50MB footprint for 30-minute audio vs 600MB for single-pass
 
 ### Key Modules
-- `cmd/jivefire/main.go` — CLI entry, 2-pass coordinator
+- `cmd/jive-visualiser/main.go` — CLI entry, 2-pass coordinator
 - `internal/audio/` — `StreamingReader` (reader.go) chunk-based decode, FFT analysis
 - `internal/encoder/` — ffmpeg-statigo wrapper, RGB→YUV conversion, FIFO buffer
 - `internal/yuv/` — YCbCr coefficients, `RGBToY`/`RGBToCb`/`RGBToCr`, `ParallelRows`

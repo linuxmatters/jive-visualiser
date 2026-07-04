@@ -13,7 +13,7 @@ var (
 	// Title style - bold red with fire emoji
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(theme.JivefireRed).
+			Foreground(theme.JiveRed).
 			MarginBottom(1)
 
 	// Section header style
@@ -26,7 +26,7 @@ var (
 	// Error message style
 	ErrorStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(theme.JivefireRed)
+			Foreground(theme.JiveRed)
 
 	// Warning message style
 	WarningStyle = lipgloss.NewStyle().
@@ -49,7 +49,7 @@ var (
 
 // PrintVersion prints version information
 func PrintVersion(version string) {
-	fmt.Println(TitleStyle.Render("Jivefire 🔥"))
+	fmt.Println(TitleStyle.Render("Jive Visualiser 🔥"))
 	fmt.Printf("%s %s\n", KeyStyle.Render("Version:"), ValueStyle.Render(version))
 }
 
@@ -62,7 +62,7 @@ type EncoderInfo struct {
 
 // PrintHardwareProbe prints a styled hardware encoder probe result
 func PrintHardwareProbe(encoders []EncoderInfo) {
-	fmt.Println(TitleStyle.Render("Jivefire 🔥"))
+	fmt.Println(TitleStyle.Render("Jive Visualiser 🔥"))
 	fmt.Println(HeaderStyle.Render("Hardware Encoder Probe"))
 
 	for _, enc := range encoders {

@@ -179,7 +179,7 @@ func createTestFrames() ([]byte, *ffmpeg.AVFrame) {
 // =============================================================================
 
 // BenchmarkGoRGBToYUV measures the parallelised Go implementation.
-// This is the production code path used by Jivefire.
+// This is the production code path used by Jive Visualiser.
 func BenchmarkGoRGBToYUV(b *testing.B) {
 	rgbData, yuvFrame := createTestFrames()
 	defer ffmpeg.AVFrameFree(&yuvFrame)

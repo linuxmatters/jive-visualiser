@@ -55,9 +55,9 @@
 #   Hide                            Hide the subsequent commands from the output
 #   Show                            Show the subsequent commands in the output
 
-Output .github/jivefire.gif
+Output .github/jive-visualiser.gif
 
-Require ./jivefire
+Require ./jive-visualiser
 
 Set Shell "fish"
 Set FontSize 13
@@ -69,6 +69,6 @@ Set WindowBarSize 32
 Set TypingSpeed 27ms
 Set Theme catppuccin-mocha
 
-Type "./jivefire --episode=69 --title='Linux Matters' testdata/LMP69s.flac testdata/LMP69.mp4" Sleep 250ms  Enter
+Type "./jive-visualiser --episode=69 --title='Linux Matters' testdata/LMP69s.flac testdata/LMP69.mp4" Sleep 250ms  Enter
 
 Sleep 13s

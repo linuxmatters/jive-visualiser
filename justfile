@@ -1,4 +1,4 @@
-# Jivefire - Just Commands
+# Jive Visualiser - Just Commands
 
 # List commands
 default:
@@ -86,26 +86,26 @@ setup:
         echo "Don't forget to commit: git commit -m 'chore: update ffmpeg-statigo to $TAG'"
     fi
 
-# Build jivefire
+# Build jive-visualiser
 build: _check-submodule
     #!/usr/bin/env bash
     VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
-    echo "Building jivefire version: $VERSION"
-    CGO_ENABLED=1 go build -ldflags="-X main.version=$VERSION" -o jivefire ./cmd/jivefire
+    echo "Building jive-visualiser version: $VERSION"
+    CGO_ENABLED=1 go build -ldflags="-X main.version=$VERSION" -o jive-visualiser ./cmd/jive-visualiser
 
 # Clean build artifacts
 clean:
-    rm -fv jivefire 2>/dev/null || true
+    rm -fv jive-visualiser 2>/dev/null || true
     @rm testdata/*.mp4 2>/dev/null || true
     @rm testdata/*.flac 2>/dev/null || true
     @rm testdata/*.wav 2>/dev/null || true
     @rm testdata/*-stereo.mp3 2>/dev/null || true
 
-# Install jivefire to ~/.local/bin
+# Install jive-visualiser to ~/.local/bin
 install: build
     @mkdir -p ~/.local/bin 2>/dev/null || true
-    @mv ./jivefire ~/.local/bin/jivefire
-    @echo "Installed jivefire to ~/.local/bin/jivefire"
+    @mv ./jive-visualiser ~/.local/bin/jive-visualiser
+    @echo "Installed jive-visualiser to ~/.local/bin/jive-visualiser"
     @echo "Make sure ~/.local/bin is in your PATH"
 
 # Benchmark RGB→YUV conversion (quick summary)
@@ -164,37 +164,37 @@ bench-encoders: build
     # Clean up any previous benchmark outputs
     rm -f testdata/bench-*.mp4
 
-    # Use jivefire's built-in hardware probe to detect available encoders
+    # Use jive-visualiser's built-in hardware probe to detect available encoders
     echo "Probing hardware encoders..."
-    ./jivefire --probe
+    ./jive-visualiser --probe
 
     # Build encoder list from probe results
     ENCODERS=()
 
     # Software is always available
-    ENCODERS+=("--command-name" "Software (libx264)" "./jivefire --no-preview --encoder=software '$INPUT' testdata/bench-software.mp4")
+    ENCODERS+=("--command-name" "Software (libx264)" "./jive-visualiser --no-preview --encoder=software '$INPUT' testdata/bench-software.mp4")
 
-    # Parse jivefire --probe output to detect available hardware encoders
-    PROBE_OUTPUT=$(./jivefire --probe 2>&1)
+    # Parse jive-visualiser --probe output to detect available hardware encoders
+    PROBE_OUTPUT=$(./jive-visualiser --probe 2>&1)
 
     if echo "$PROBE_OUTPUT" | grep -q "h264_nvenc.*✓ available"; then
-        ENCODERS+=("--command-name" "NVENC (h264_nvenc)" "./jivefire --no-preview --encoder=nvenc '$INPUT' testdata/bench-nvenc.mp4")
+        ENCODERS+=("--command-name" "NVENC (h264_nvenc)" "./jive-visualiser --no-preview --encoder=nvenc '$INPUT' testdata/bench-nvenc.mp4")
     fi
 
     if echo "$PROBE_OUTPUT" | grep -q "h264_vaapi.*✓ available"; then
-        ENCODERS+=("--command-name" "VA-API (h264_vaapi)" "./jivefire --no-preview --encoder=vaapi '$INPUT' testdata/bench-vaapi.mp4")
+        ENCODERS+=("--command-name" "VA-API (h264_vaapi)" "./jive-visualiser --no-preview --encoder=vaapi '$INPUT' testdata/bench-vaapi.mp4")
     fi
 
     if echo "$PROBE_OUTPUT" | grep -q "h264_vulkan.*✓ available"; then
-        ENCODERS+=("--command-name" "Vulkan (h264_vulkan)" "./jivefire --no-preview --encoder=vulkan '$INPUT' testdata/bench-vulkan.mp4")
+        ENCODERS+=("--command-name" "Vulkan (h264_vulkan)" "./jive-visualiser --no-preview --encoder=vulkan '$INPUT' testdata/bench-vulkan.mp4")
     fi
 
     if echo "$PROBE_OUTPUT" | grep -q "h264_qsv.*✓ available"; then
-        ENCODERS+=("--command-name" "QSV (h264_qsv)" "./jivefire --no-preview --encoder=qsv '$INPUT' testdata/bench-qsv.mp4")
+        ENCODERS+=("--command-name" "QSV (h264_qsv)" "./jive-visualiser --no-preview --encoder=qsv '$INPUT' testdata/bench-qsv.mp4")
     fi
 
     if echo "$PROBE_OUTPUT" | grep -q "h264_videotoolbox.*✓ available"; then
-        ENCODERS+=("--command-name" "VideoToolbox (h264_videotoolbox)" "./jivefire --no-preview --encoder=videotoolbox '$INPUT' testdata/bench-videotoolbox.mp4")
+        ENCODERS+=("--command-name" "VideoToolbox (h264_videotoolbox)" "./jive-visualiser --no-preview --encoder=videotoolbox '$INPUT' testdata/bench-videotoolbox.mp4")
     fi
 
     echo ""
@@ -214,7 +214,7 @@ bench-encoders: build
 # Record gif
 vhs: build
     # unset LD_LIBRARY_PATH to avoid ttyd/libwebsockets conflicts with GPU drivers
-    @env -u LD_LIBRARY_PATH vhs ./jivefire.tape
+    @env -u LD_LIBRARY_PATH vhs ./jive-visualiser.tape
 
 # Show current version (from git tags or "dev" if no tags)
 version:
@@ -309,12 +309,12 @@ test-encoder: build
       fi
       echo "OK: $2 audio ${out_dur}s matches source ${src_dur}s (Δ${delta}s)"
     }
-    ./jivefire --episode="01" --title "Linux Matters mp3 (mono)" testdata/LMP0.mp3 testdata/LMP0-mp3.mp4
-    ./jivefire --no-preview --channels 2 --episode="02" --title "Linux Matters mp3 (stereo)" testdata/LMP0-stereo.mp3 testdata/LMP0-mp3-stereo.mp4
-    ./jivefire --episode="01" --title "Linux Matters flac (mono)" testdata/LMP0.flac testdata/LMP0-flac.mp4
-    ./jivefire --no-preview --channels 2 --episode="02" --title "Linux Matters flac (stereo)" testdata/LMP0-stereo.flac testdata/LMP0-flac-stereo.mp4
-    ./jivefire --episode="01" --title "Linux Matters: wav (mono)" testdata/LMP0.wav testdata/LMP0-wav.mp4
-    ./jivefire --no-preview --channels 2 --episode="02" --title "Linux Matters: wav (stereo)" testdata/LMP0-stereo.wav testdata/LMP0-wav-stereo.mp4
+    ./jive-visualiser --episode="01" --title "Linux Matters mp3 (mono)" testdata/LMP0.mp3 testdata/LMP0-mp3.mp4
+    ./jive-visualiser --no-preview --channels 2 --episode="02" --title "Linux Matters mp3 (stereo)" testdata/LMP0-stereo.mp3 testdata/LMP0-mp3-stereo.mp4
+    ./jive-visualiser --episode="01" --title "Linux Matters flac (mono)" testdata/LMP0.flac testdata/LMP0-flac.mp4
+    ./jive-visualiser --no-preview --channels 2 --episode="02" --title "Linux Matters flac (stereo)" testdata/LMP0-stereo.flac testdata/LMP0-flac-stereo.mp4
+    ./jive-visualiser --episode="01" --title "Linux Matters: wav (mono)" testdata/LMP0.wav testdata/LMP0-wav.mp4
+    ./jive-visualiser --no-preview --channels 2 --episode="02" --title "Linux Matters: wav (stereo)" testdata/LMP0-stereo.wav testdata/LMP0-wav-stereo.mp4
     assert_audio_match testdata/LMP0.mp3        testdata/LMP0-mp3.mp4
     assert_audio_match testdata/LMP0-stereo.mp3 testdata/LMP0-mp3-stereo.mp4
     assert_audio_match testdata/LMP0.flac       testdata/LMP0-flac.mp4
