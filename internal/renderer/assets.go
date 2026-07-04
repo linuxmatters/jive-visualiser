@@ -75,10 +75,7 @@ func LoadFont(size float64) (font.Face, error) {
 // DrawCenterText draws text centred horizontally at the specified Y position.
 func DrawCenterText(img *image.RGBA, face font.Face, text string, centerY int, textColor color.RGBA) {
 	d := newTextDrawer(img, face, textColor)
-
-	bounds, _ := d.BoundString(text)
-	textWidth := (bounds.Max.X - bounds.Min.X).Ceil()
-	textHeight := (bounds.Max.Y - bounds.Min.Y).Ceil()
+	textWidth, textHeight := measureDrawerText(d, text)
 
 	// DrawString places the baseline at y, so offset below centre to visually
 	// centre the glyph block.
@@ -92,10 +89,7 @@ func DrawCenterText(img *image.RGBA, face font.Face, text string, centerY int, t
 // DrawEpisodeNumber draws the episode number in the top right corner
 func DrawEpisodeNumber(img *image.RGBA, face font.Face, episodeNum string, textColor color.RGBA) {
 	d := newTextDrawer(img, face, textColor)
-
-	bounds, _ := d.BoundString(episodeNum)
-	textWidth := (bounds.Max.X - bounds.Min.X).Ceil()
-	textHeight := (bounds.Max.Y - bounds.Min.Y).Ceil()
+	textWidth, textHeight := measureDrawerText(d, episodeNum)
 
 	// Top-right corner, inset 30px from the edges.
 	offset := 30

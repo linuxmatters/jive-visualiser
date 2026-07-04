@@ -30,8 +30,6 @@ const (
 )
 
 // RGBToY converts RGB to Y (luma) component.
-//
-//go:inline
 func RGBToY(r, g, b int32) uint8 {
 	return uint8((YR*r + YG*g + YB*b + 1<<15) >> 16) //nolint:gosec // result is clamped to 0-255
 }
@@ -42,8 +40,6 @@ func RGBToY(r, g, b int32) uint8 {
 // valid result occupies the low 24 bits, so a set top byte means the value fell
 // outside 0-255: ^(cb >> 31) then fills the byte with 0 for a negative overflow
 // or 255 for a positive one, dodging a compare-and-branch on the hot path.
-//
-//go:inline
 func RGBToCb(r, g, b int32) uint8 {
 	cb := CbR*r + CbG*g + CbB*b + 257<<15
 	if uint32(cb)&0xff000000 == 0 { //nolint:gosec // intentional bit manipulation
@@ -56,8 +52,6 @@ func RGBToCb(r, g, b int32) uint8 {
 
 // RGBToCr converts RGB to Cr (red-difference chroma) with a branchless clamp.
 // The clamp works exactly as in RGBToCb.
-//
-//go:inline
 func RGBToCr(r, g, b int32) uint8 {
 	cr := CrR*r + CrG*g + CrB*b + 257<<15
 	if uint32(cr)&0xff000000 == 0 { //nolint:gosec // intentional bit manipulation

@@ -37,7 +37,7 @@ func TestNewStreamingReaderInvalidFile(t *testing.T) {
 	}
 }
 
-func TestStreamingReaderReadChunk(t *testing.T) {
+func TestStreamingReaderReadInto(t *testing.T) {
 	reader, err := NewStreamingReader("../../testdata/LMP0.mp3")
 	if err != nil {
 		t.Fatalf("Failed to create streaming reader: %v", err)
@@ -45,10 +45,12 @@ func TestStreamingReaderReadChunk(t *testing.T) {
 	defer reader.Close()
 
 	// Read a chunk of 2048 samples (MP3 may return less due to frame boundaries)
-	chunk, err := reader.ReadChunk(2048)
+	buf := make([]float64, 2048)
+	n, err := reader.ReadInto(buf)
 	if err != nil {
 		t.Fatalf("Failed to read chunk: %v", err)
 	}
+	chunk := buf[:n]
 
 	if len(chunk) == 0 {
 		t.Errorf("Expected non-empty chunk, got %d samples", len(chunk))
@@ -78,15 +80,17 @@ func TestStreamingReaderMultipleChunks(t *testing.T) {
 	chunkSize := 2048
 	totalRead := int64(0)
 	chunkCount := 0
+	buf := make([]float64, chunkSize)
 
 	for {
-		chunk, err := reader.ReadChunk(chunkSize)
+		n, err := reader.ReadInto(buf)
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			t.Fatalf("Error reading chunk %d: %v", chunkCount, err)
 		}
+		chunk := buf[:n]
 
 		if len(chunk) > chunkSize {
 			t.Errorf("Chunk %d is larger than requested: %d > %d", chunkCount, len(chunk), chunkSize)
@@ -123,9 +127,10 @@ func TestStreamingReaderEOF(t *testing.T) {
 
 	// Read all samples
 	chunkSize := 4096
+	buf := make([]float64, chunkSize)
 
 	for {
-		_, err := reader.ReadChunk(chunkSize)
+		_, err := reader.ReadInto(buf)
 		if errors.Is(err, io.EOF) {
 			// Expected EOF
 			break
@@ -136,7 +141,7 @@ func TestStreamingReaderEOF(t *testing.T) {
 	}
 
 	// Try reading again - should get EOF immediately
-	_, err = reader.ReadChunk(chunkSize)
+	_, err = reader.ReadInto(buf)
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("Expected EOF on second read past end, got: %v", err)
 	}
@@ -173,14 +178,16 @@ func TestStreamingReaderMultipleReads(t *testing.T) {
 
 	var samples1 []float64
 	chunkSize := 2048
+	buf1 := make([]float64, chunkSize)
 	for {
-		chunk, err := reader1.ReadChunk(chunkSize)
+		n, err := reader1.ReadInto(buf1)
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			t.Fatalf("Error reading from first reader: %v", err)
 		}
+		chunk := buf1[:n]
 		samples1 = append(samples1, chunk...)
 	}
 
@@ -193,14 +200,16 @@ func TestStreamingReaderMultipleReads(t *testing.T) {
 
 	var samples2 []float64
 	chunkSize2 := 4096
+	buf2 := make([]float64, chunkSize2)
 	for {
-		chunk, err := reader2.ReadChunk(chunkSize2)
+		n, err := reader2.ReadInto(buf2)
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			t.Fatalf("Error reading from second reader: %v", err)
 		}
+		chunk := buf2[:n]
 		samples2 = append(samples2, chunk...)
 	}
 

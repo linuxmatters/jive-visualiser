@@ -126,11 +126,8 @@ func (f *avAudioFIFO) write(samples []float32) error {
 // size returns the number of samples per channel currently buffered.
 func (f *avAudioFIFO) size() (int, error) {
 	ret, err := ffmpeg.AVAudioFifoSize(f.fifo)
-	if err != nil {
-		return 0, fmt.Errorf("query audio FIFO size: %w", err)
-	}
-	if ret < 0 {
-		return 0, fmt.Errorf("query audio FIFO size: %w", ffmpeg.WrapErr(ret))
+	if err := checkFFmpeg(ret, err, "query audio FIFO size"); err != nil {
+		return 0, err
 	}
 	return ret, nil
 }
@@ -1110,29 +1107,8 @@ func (e *Encoder) Close() error {
 		if err := checkFFmpeg(ret, err, "flush video encoder"); err != nil {
 			errs = append(errs, err)
 		}
-
-		// Drain remaining packets, reusing the shared e.pkt (freed once below).
-		// Break on any error other than EOF/EAGAIN so a persistent receive
-		// error cannot spin this loop forever.
-		pkt := e.pkt
-		for {
-			ret, err := ffmpeg.AVCodecReceivePacket(e.videoCodec, pkt)
-			if errors.Is(err, ffmpeg.AVErrorEOF) || errors.Is(err, ffmpeg.EAgain) {
-				break
-			}
-			if err := checkFFmpeg(ret, err, "receive flushed packet"); err != nil {
-				errs = append(errs, err)
-				break
-			}
-
-			pkt.SetStreamIndex(e.videoStream.Index())
-			ffmpeg.AVPacketRescaleTs(pkt, e.videoCodec.TimeBase(), e.videoStream.TimeBase())
-			ret, err = ffmpeg.AVInterleavedWriteFrame(e.formatCtx, pkt)
-			ffmpeg.AVPacketUnref(pkt)
-			if err := checkFFmpeg(ret, err, "write flushed packet"); err != nil {
-				errs = append(errs, err)
-				break
-			}
+		if err := e.receiveAndWriteVideoPackets(); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
