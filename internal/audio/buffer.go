@@ -24,8 +24,8 @@ func readIntoBuffer(reader *StreamingReader, buf []float64) (int, error) {
 	return total, nil
 }
 
-// FillFFTBuffer reads up to len(buf) samples from reader via repeated ReadChunk
-// calls. Returns the number of samples read. Returns (0, nil) on immediate EOF,
+// FillFFTBuffer reads up to len(buf) samples from reader via readIntoBuffer.
+// Returns the number of samples read. Returns (0, nil) on immediate EOF,
 // allowing callers to decide whether that is an error.
 func FillFFTBuffer(reader *StreamingReader, buf []float64) (int, error) {
 	total, err := readIntoBuffer(reader, buf)

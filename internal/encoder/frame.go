@@ -10,8 +10,12 @@ import (
 	"github.com/linuxmatters/jive-visualiser/internal/yuv"
 )
 
-// convertRGBAToYUV converts RGBA data directly to YUV420P (planar) format.
-// Skips the intermediate RGB24 buffer allocation for significantly faster software encoding.
+// convertRGBAToYUV converts RGBA data directly to YUV420P (planar) format,
+// skipping the intermediate RGB24 buffer allocation for faster software encoding.
+// This near-duplicates convertRGBAToNV12 on purpose: the two hot paths stay
+// separate to avoid a callback or interface indirection that would slow the
+// per-pixel loop. Do not merge them; shared low-level primitives live in
+// internal/yuv.
 func convertRGBAToYUV(pool *yuv.RowPool, rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width int) {
 	yPlane := yuvFrame.Data().Get(0)
 	uPlane := yuvFrame.Data().Get(1)
@@ -74,8 +78,10 @@ func convertRGBAToYUV(pool *yuv.RowPool, rgbaData []byte, yuvFrame *ffmpeg.AVFra
 	})
 }
 
-// convertRGBAToNV12 converts RGBA data to NV12 (semi-planar) format.
-// NV12 has a Y plane followed by interleaved UV plane.
+// convertRGBAToNV12 converts RGBA data to NV12 (semi-planar) format: a Y plane
+// followed by a single interleaved UV plane. This near-duplicates
+// convertRGBAToYUV on purpose; see that function for why the two are kept
+// separate rather than merged.
 func convertRGBAToNV12(pool *yuv.RowPool, rgbaData []byte, nv12Frame *ffmpeg.AVFrame, width int) {
 	yPlane := nv12Frame.Data().Get(0)
 	uvPlane := nv12Frame.Data().Get(1)

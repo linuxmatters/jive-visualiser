@@ -55,8 +55,8 @@ func (m *Model) renderComplete() string {
 	s.WriteString("\n")
 
 	// Pass 1 table: a borderless two-column label/value grid. The table handles
-	// column alignment in place of the old %-18s manual padding; it renders
-	// borderless so it nests inside the rounded-border box without double chrome.
+	// column alignment, and renders borderless so it nests inside the
+	// rounded-border box without double chrome.
 	if m.audioProfile != nil {
 		pass1 := summaryTable().StyleFunc(func(_, col int) lipgloss.Style {
 			if col == 0 {
@@ -81,8 +81,7 @@ func (m *Model) renderComplete() string {
 
 	// Pass 2 table: label, duration, percentage and a rendered summary bar. The
 	// bar is pre-rendered into a cell value (summaryBar.ViewAs renders once at
-	// completion, which the proposal permits). The table aligns the four columns
-	// in place of the old %-18s/%-6s manual padding.
+	// completion). The table aligns the four columns.
 	pass2 := summaryTable().StyleFunc(func(_, col int) lipgloss.Style {
 		switch col {
 		case 0:

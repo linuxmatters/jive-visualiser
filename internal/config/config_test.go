@@ -334,7 +334,7 @@ func TestParseHexColor_ByteOrder(t *testing.T) {
 }
 
 // TestRuntimeConfig_GetBarColor verifies that GetBarColor returns default
-// values when optional fields are nil.
+// values when the bar colour override is unset (Set is false).
 func TestRuntimeConfig_GetBarColor(t *testing.T) {
 	testCases := []struct {
 		name   string
@@ -392,7 +392,7 @@ func TestRuntimeConfig_GetBarColor(t *testing.T) {
 }
 
 // TestRuntimeConfig_GetTextColor verifies that GetTextColor returns default
-// values when optional fields are nil.
+// values when the text colour override is unset (Set is false).
 func TestRuntimeConfig_GetTextColor(t *testing.T) {
 	testCases := []struct {
 		name   string
@@ -440,8 +440,8 @@ func TestRuntimeConfig_GetTextColor(t *testing.T) {
 }
 
 // TestRuntimeConfig_NilFields verifies that Get*() methods return defaults
-// when optional fields are nil. This catches nil pointer dereferences in
-// config access that could panic during rendering.
+// when optional fields are unset (colour Set is false, image path empty).
+// This guards the zero-value config path used during rendering.
 func TestRuntimeConfig_NilFields(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -451,7 +451,7 @@ func TestRuntimeConfig_NilFields(t *testing.T) {
 		{
 			name:   "Completely nil config",
 			config: &RuntimeConfig{
-				// All fields nil/empty
+				// Zero value: colour overrides unset, image paths empty
 			},
 			validate: func(t *testing.T, c *RuntimeConfig) {
 				// GetBarColor should return defaults

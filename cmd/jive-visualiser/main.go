@@ -25,6 +25,7 @@ import (
 // (e.g. "v0.1.0") for releases.
 var version = "dev"
 
+// CLI holds the parsed command-line flags and positional arguments.
 var CLI struct {
 	Input           string `arg:"" name:"input" help:"Input WAV file" optional:""`
 	Output          string `arg:"" name:"output" help:"Output MP4 file" optional:""`

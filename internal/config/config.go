@@ -8,9 +8,9 @@ import (
 
 // Video settings
 const (
-	Width  = 1280
-	Height = 720
-	FPS    = 30
+	Width  = 1280 // Output frame width in pixels
+	Height = 720  // Output frame height in pixels
+	FPS    = 30   // Output frames per second
 )
 
 // Audio settings
@@ -20,15 +20,15 @@ const (
 	// (reader.SampleRate()); this constant is a documented default used for
 	// synthetic test signals and as a fallback reference.
 	SampleRate = 44100
-	FFTSize    = 2048
+	FFTSize    = 2048 // FFT window size in samples; power of two for a fast transform
 )
 
-// Visualization settings
+// Visualisation settings
 const (
-	NumBars      = 64   // Number of bars
-	BarWidth     = 12   // Width of each bar
-	BarGap       = 8    // Gap between bars
-	CenterGap    = 100  // Gap between top and bottom bar sections
+	NumBars      = 64   // Frequency bars across the width
+	BarWidth     = 12   // Bar width in pixels
+	BarGap       = 8    // Gap between bars in pixels
+	CenterGap    = 100  // Vertical gap in pixels between top and bottom bar sections
 	MaxBarHeight = 0.50 // Maximum bar height as fraction of available space
 )
 
@@ -49,13 +49,13 @@ const (
 // Embedded assets live in internal/renderer/assets/. Runtime overrides for
 // colours and image paths are applied via RuntimeConfig.
 const (
-	// Bar colors (RGB values for visualization bars)
+	// Bar colour, brand red #A40000 (RGB values for visualisation bars)
 	BarColorR = 164
 	BarColorG = 0
 	BarColorB = 0
 
-	// Text/UI colors (RGB values for title overlay and framing lines)
-	// Brand yellow #F8B31D - used for title text, framing lines, and thumbnail text
+	// Text/UI colour, brand yellow #F8B31D. Used for title text, framing lines,
+	// and thumbnail text.
 	TextColorR = 248
 	TextColorG = 179
 	TextColorB = 29
@@ -87,8 +87,8 @@ type OptionalColor struct {
 	Set     bool
 }
 
-// RuntimeConfig holds optional runtime overrides for customization
-// When fields are unset/empty, the defaults from constants above are used
+// RuntimeConfig holds optional runtime overrides for customisation.
+// When fields are unset or empty, the defaults from the constants above are used.
 type RuntimeConfig struct {
 	// Optional colour overrides (apply only when Set is true)
 	BarColor  OptionalColor
@@ -99,7 +99,7 @@ type RuntimeConfig struct {
 	ThumbnailImagePath  string
 }
 
-// GetBarColor returns the bar color RGB values (uses override or default)
+// GetBarColor returns the bar colour RGB values, using the override when set or the default otherwise.
 func (c *RuntimeConfig) GetBarColor() (r, g, b uint8) {
 	if c.BarColor.Set {
 		return c.BarColor.R, c.BarColor.G, c.BarColor.B
@@ -107,7 +107,7 @@ func (c *RuntimeConfig) GetBarColor() (r, g, b uint8) {
 	return BarColorR, BarColorG, BarColorB
 }
 
-// GetTextColor returns the text color RGB values (uses override or default)
+// GetTextColor returns the text colour RGB values, using the override when set or the default otherwise.
 func (c *RuntimeConfig) GetTextColor() (r, g, b uint8) {
 	if c.TextColor.Set {
 		return c.TextColor.R, c.TextColor.G, c.TextColor.B
@@ -133,17 +133,14 @@ func (c *RuntimeConfig) GetThumbnailImagePath() (path string, isCustom bool) {
 	return ThumbnailImageAsset, false
 }
 
-// ParseHexColor parses a hex color string (#RRGGBB or RRGGBB) and returns RGB values
+// ParseHexColor parses a hex colour string (#RRGGBB or RRGGBB) and returns RGB values.
 func ParseHexColor(hex string) (r, g, b uint8, err error) {
-	// Remove leading # if present
 	hex = strings.TrimPrefix(hex, "#")
 
-	// Validate length
 	if len(hex) != 6 {
 		return 0, 0, 0, fmt.Errorf("invalid hex color format: must be 6 characters (RRGGBB)")
 	}
 
-	// Parse RGB components
 	var rgb uint64
 	rgb, err = strconv.ParseUint(hex, 16, 32)
 	if err != nil {
