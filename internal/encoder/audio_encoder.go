@@ -306,6 +306,12 @@ func (f *avAudioFIFO) write(samples []float32) error {
 	if len(samples) == 0 {
 		return nil
 	}
+	if f.channels <= 0 {
+		return fmt.Errorf("invalid audio FIFO channel count: %d", f.channels)
+	}
+	if len(samples)%f.channels != 0 {
+		return fmt.Errorf("audio FIFO sample length %d is not divisible by channel count %d", len(samples), f.channels)
+	}
 	if err := f.growScratch(len(samples)); err != nil {
 		return err
 	}

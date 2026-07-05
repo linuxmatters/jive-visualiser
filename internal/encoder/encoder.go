@@ -58,6 +58,9 @@ func New(config Config) (*Encoder, error) {
 	if config.OutputPath == "" {
 		return nil, fmt.Errorf("output path cannot be empty")
 	}
+	if config.AudioChannels != 0 && config.AudioChannels != 1 && config.AudioChannels != 2 {
+		return nil, fmt.Errorf("invalid audio channel count: %d", config.AudioChannels)
+	}
 
 	return &Encoder{config: config}, nil
 }

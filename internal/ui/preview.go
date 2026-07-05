@@ -26,13 +26,16 @@ func DefaultPreviewConfig() PreviewConfig {
 // Each terminal cell represents a rectangular region of the source image
 // Averages all pixels in each region for smooth, high-quality downsampling
 func DownsampleFrame(frame *image.RGBA, config PreviewConfig) [][]color.RGBA {
+	if frame == nil || config.Width <= 0 || config.Height <= 0 {
+		return nil
+	}
+
 	bounds := frame.Bounds()
 	srcWidth := bounds.Dx()
 	srcHeight := bounds.Dy()
-
-	// Source pixels covered by each terminal cell.
-	cellWidth := srcWidth / config.Width
-	cellHeight := srcHeight / config.Height
+	if srcWidth <= 0 || srcHeight <= 0 {
+		return nil
+	}
 
 	preview := make([][]color.RGBA, config.Height)
 
@@ -42,17 +45,17 @@ func DownsampleFrame(frame *image.RGBA, config PreviewConfig) [][]color.RGBA {
 
 	for row := 0; row < config.Height; row++ {
 		preview[row] = make([]color.RGBA, config.Width)
+		srcY0, srcY1 := sourceRange(row, config.Height, srcHeight)
 		for col := 0; col < config.Width; col++ {
-			srcX := col * cellWidth
-			srcY := row * cellHeight
+			srcX0, srcX1 := sourceRange(col, config.Width, srcWidth)
 
 			// Average every source pixel in this cell's region.
 			var sumR, sumG, sumB uint32
 			pixelCount := uint32(0)
 
-			for y := srcY; y < srcY+cellHeight && y < srcHeight; y++ {
-				offset := y*stride + srcX*4
-				for x := 0; x < cellWidth && srcX+x < srcWidth; x++ {
+			for y := srcY0; y < srcY1; y++ {
+				offset := y*stride + srcX0*4
+				for x := srcX0; x < srcX1; x++ {
 					sumR += uint32(pix[offset])
 					sumG += uint32(pix[offset+1])
 					sumB += uint32(pix[offset+2])
@@ -75,8 +78,20 @@ func DownsampleFrame(frame *image.RGBA, config PreviewConfig) [][]color.RGBA {
 	return preview
 }
 
+func sourceRange(index, cells, sourceSize int) (int, int) {
+	start := index * sourceSize / cells
+	end := (index + 1) * sourceSize / cells
+	if end <= start {
+		end = start + 1
+	}
+	if end > sourceSize {
+		end = sourceSize
+	}
+	return start, end
+}
+
 // RenderPreview converts an RGB preview grid to a string representation
-// using ANSI 24-bit true color escape codes for beautiful colored rendering
+// using ANSI 24-bit true colour escape codes for beautiful coloured rendering
 func RenderPreview(preview [][]color.RGBA) string {
 	if len(preview) == 0 {
 		return ""

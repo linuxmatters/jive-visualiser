@@ -32,11 +32,11 @@ jobs:
       - run: go vet ./...
       - name: Check cyclomatic complexity
         run: |
-          go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+          go install github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0
           gocyclo -top 20 -ignore '_test\.go$' -avg .
       - name: Check ineffectual assignments
         run: |
-          go install github.com/gordonklaus/ineffassign@latest
+          go install github.com/gordonklaus/ineffassign@v0.2.0
           ineffassign ./...
       - uses: golangci/golangci-lint-action@v9
 
@@ -139,7 +139,7 @@ jobs:
           comment-summary-in-pr: on-failure
 
       - name: Run govulncheck
-        uses: golang/govulncheck-action@master
+        uses: golang/govulncheck-action@v1.0.4
         with:
           repo-checkout: false
           go-version-file: go.mod
@@ -264,10 +264,6 @@ jobs:
           chmod +x jive-visualiser-darwin-arm64
           sudo mv jive-visualiser-darwin-arm64 /usr/local/bin/jive-visualiser
           ```
-
-          ## Checksums
-
-          SHA256 checksums are provided below for verification.
           NOTES
 
           cat CHANGELOG.md

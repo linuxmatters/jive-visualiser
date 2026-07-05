@@ -19,3 +19,11 @@ ffmpeg
 FFmpeg
 aarch64
 centre
+AArch64
+amd64
+QuickSync
+Qt5
+kung
+fu
+H
+H.

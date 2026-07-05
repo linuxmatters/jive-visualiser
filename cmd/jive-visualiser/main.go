@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -78,8 +79,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := os.Stat(CLI.Input); os.IsNotExist(err) {
-		cli.PrintError(fmt.Sprintf("input file does not exist: %s", CLI.Input))
+	if err := validateExistingPath("input file", CLI.Input, os.Stat); err != nil {
+		cli.PrintError(err.Error())
 		os.Exit(1)
 	}
 
@@ -138,16 +139,16 @@ func main() {
 	}
 
 	if CLI.BackgroundImage != "" {
-		if _, err := os.Stat(CLI.BackgroundImage); os.IsNotExist(err) {
-			cli.PrintError(fmt.Sprintf("background image does not exist: %s", CLI.BackgroundImage))
+		if err := validateExistingPath("background image", CLI.BackgroundImage, os.Stat); err != nil {
+			cli.PrintError(err.Error())
 			os.Exit(1)
 		}
 		runtimeConfig.BackgroundImagePath = CLI.BackgroundImage
 	}
 
 	if CLI.ThumbnailImage != "" {
-		if _, err := os.Stat(CLI.ThumbnailImage); os.IsNotExist(err) {
-			cli.PrintError(fmt.Sprintf("thumbnail image does not exist: %s", CLI.ThumbnailImage))
+		if err := validateExistingPath("thumbnail image", CLI.ThumbnailImage, os.Stat); err != nil {
+			cli.PrintError(err.Error())
 			os.Exit(1)
 		}
 		runtimeConfig.ThumbnailImagePath = CLI.ThumbnailImage
@@ -172,6 +173,24 @@ func parseEncoderFlag(value string) (encoder.HWAccelType, error) {
 	return hwAccelType, nil
 }
 
+func validateExistingPath(label, path string, stat func(string) (os.FileInfo, error)) error {
+	if _, err := stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s does not exist: %s", label, path)
+		}
+		return fmt.Errorf("checking %s %q: %w", label, path, err)
+	}
+	return nil
+}
+
+func thumbnailOutputPath(outputFile string) string {
+	ext := filepath.Ext(outputFile)
+	if ext == "" {
+		return outputFile + ".png"
+	}
+	return strings.TrimSuffix(outputFile, ext) + ".png"
+}
+
 func formatEncoderNames(names []string) string {
 	if len(names) == 0 {
 		return ""
@@ -185,7 +204,7 @@ func formatEncoderNames(names []string) string {
 func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, meta renderer.PodcastMeta) {
 	overallStartTime := time.Now()
 
-	thumbnailPath := strings.Replace(outputFile, ".mp4", ".png", 1)
+	thumbnailPath := thumbnailOutputPath(outputFile)
 	thumbnailStartTime := time.Now()
 	if err := renderer.GenerateThumbnail(thumbnailPath, meta, runtimeConfig); err != nil {
 		cli.PrintError(fmt.Sprintf("failed to generate thumbnail: %v", err))

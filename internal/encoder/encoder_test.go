@@ -54,6 +54,31 @@ func fifoRead(t *testing.T, f *avAudioFIFO, nbSamples int) []float32 {
 	return out
 }
 
+func TestAudioChannelsValidation(t *testing.T) {
+	base := Config{
+		OutputPath: "out.mp4",
+		Width:      64,
+		Height:     64,
+		Framerate:  30,
+	}
+
+	for _, channels := range []int{0, 1, 2} {
+		config := base
+		config.AudioChannels = channels
+		if _, err := New(config); err != nil {
+			t.Fatalf("New() with AudioChannels=%d failed: %v", channels, err)
+		}
+	}
+
+	for _, channels := range []int{-1, 3} {
+		config := base
+		config.AudioChannels = channels
+		if _, err := New(config); err == nil {
+			t.Fatalf("New() with AudioChannels=%d succeeded, want error", channels)
+		}
+	}
+}
+
 // TestAVAudioFIFO_WriteReadMono writes interleaved mono samples, reads a full
 // frame, and asserts the values round-trip exactly through the packed float32
 // FIFO.
@@ -105,6 +130,17 @@ func TestAVAudioFIFO_WriteReadStereo(t *testing.T) {
 		if got[i] != samples[i] {
 			t.Errorf("interleaved sample %d = %v, want %v (L/R swap?)", i, got[i], samples[i])
 		}
+	}
+}
+
+func TestAVAudioFIFO_WriteRejectsPartialChannelFrame(t *testing.T) {
+	f := newTestFIFO(t, 2)
+
+	if err := f.write([]float32{1.0, 2.0, 3.0}); err == nil {
+		t.Fatal("write() with odd stereo sample count succeeded, want error")
+	}
+	if got := fifoSize(t, f); got != 0 {
+		t.Fatalf("size() after rejected write = %d, want 0", got)
 	}
 }
 
@@ -469,8 +505,7 @@ func makeOpaqueRGBAFrame(width, height int, red, green, blue byte) []byte {
 
 // TestEncoderPOC is a proof-of-concept test that encodes a single black frame via RGBA path
 func TestEncoderPOC(t *testing.T) {
-	outputPath := "../../testdata/poc-video.mp4"
-	defer os.Remove(outputPath)
+	outputPath := t.TempDir() + "/poc-video.mp4"
 
 	config := Config{
 		OutputPath: outputPath,
@@ -526,8 +561,7 @@ func TestEncoderPOC(t *testing.T) {
 
 // TestEncoderRGBA tests the RGBA frame writing path
 func TestEncoderRGBA(t *testing.T) {
-	outputPath := "../../testdata/poc-rgba-video.mp4"
-	defer os.Remove(outputPath)
+	outputPath := t.TempDir() + "/poc-rgba-video.mp4"
 
 	config := Config{
 		OutputPath: outputPath,

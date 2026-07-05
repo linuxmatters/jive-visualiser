@@ -14,14 +14,14 @@ Your podcast audio deserves more than a static image on YouTube. Jive Visualiser
 
 - 🖼️ **Thumbnail generator** YouTube-style PNG with your title, saved alongside the video
 - 🎬 **1280×720 @ 30fps** H.264/AAC YouTube-ready MP4, no questions asked
-  - 🎚️ **64 frequency bars** that actually look discrete (not that smeared spectrum nonsense)
+  - 🎚️ **64 frequency bars** that look discrete (not that smeared spectrum nonsense)
   - 🪞 **Symmetric mirroring** above and below centre, doubles the visual impact
   - 🔬 **FFT-based analysis** 2048-point Hanning window, linear frequency binning, log-scaled amplitude
   - ✨ **Spring-driven bar dynamics** bars snap up instantly, spring back down via harmonica peak-hold
 - 🚀 **Stupidly fast** streaming pipeline, parallel RGB→YUV conversion
   - ⚡ **GPU acceleration** auto-detected: NVENC, Vulkan, VA-API, QuickSync, VideoToolbox
 - 📦 **Single binary** No Python. No FFmpeg install required. Just drop and render
-  - 🐧 **Linux** (amd64 and aarch64)
+  - 🐧 **Linux** (amd64 and AArch64)
   - 🍏 **macOS** (x86 and Apple Silicon)
 
 ## Usage
@@ -36,7 +36,7 @@ Your podcast audio deserves more than a static image on YouTube. Jive Visualiser
 ./jive-visualiser --episode=42 --title="Linux Matters" input.wav output.mp4
 ```
 
-### Without Episode Number (unnumbered audio)
+### Without Episode Number (Unnumbered Audio)
 ```bash
 ./jive-visualiser --title="Linux Matters" input.wav output.mp4
 ```
@@ -53,7 +53,7 @@ Your podcast audio deserves more than a static image on YouTube. Jive Visualiser
 
 ## Build
 
-Jive Visualiser uses [ffmpeg-statigo](https://github.com/linuxmatters/ffmpeg-statigo) for FFmpeg static bindings.
+Jive Visualiser uses [FFmpeg statigo](https://github.com/linuxmatters/ffmpeg-statigo) for FFmpeg static bindings.
 
 ```bash
 # Setup or update ffmpeg-statigo submodule and library
@@ -69,6 +69,6 @@ just test-encoder # Test encoder
 
 FFmpeg's audio visualisation filters (`showfreqs`, `showspectrum`) render continuous frequency spectra, not discrete bars. No amount of FFmpeg filter chain kung-fu can achieve the discrete 64-bar aesthetic required for Linux Matters branding. Solution: Do the FFT analysis and bar rendering in Go, pipe frames to FFmpeg for encoding.
 
-**Why Go over Python?** The original `djfun/audio-visualizer-python` tool is a moribund Qt5 GUI with significant tech debt. For our podcast production needs we wanted multi-archtitecture tools that's that can integrate into automation pipelines.
+**Why Go over Python?** The original `djfun/audio-visualizer-python` tool is a moribund Qt5 GUI with significant tech debt. For our podcast production needs we wanted multi-architecture tools that can integrate into automation pipelines.
 
-The Jive Visualiser architecture, such as it is, is available in the [ARCHITECTURE.md](docs/ARCHITECTURE.md) document.
+The Jive Visualiser architecture, such as it is, is available in the [architecture document](docs/ARCHITECTURE.md).
