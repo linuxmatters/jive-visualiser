@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"image"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +24,7 @@ func maxLineWidth(s string) int {
 
 // boxWidthFixture builds a model populated with enough state that every bordered
 // box renders its full content: an audio profile, a Pass 2 render state with the
-// widest codec strings, primed spectrum springs, a preview frame, and a
+// widest codec strings, primed spectrum springs, a rendered preview, and a
 // completion summary. A representative window size is applied via WindowSizeMsg.
 func boxWidthFixture(t *testing.T, width int) *Model {
 	t.Helper()
@@ -46,14 +45,15 @@ func boxWidthFixture(t *testing.T, width int) *Model {
 		bars[i] = 0.5
 	}
 	m.renderState = RenderProgress{
-		Frame:       250,
-		TotalFrames: 1000,
-		FileSize:    12345678,
-		VideoCodec:  "H.264 1920×1080",
-		AudioCodec:  "AAC 44.1㎑ stereo",
-		EncoderName: "h264_vaapi",
-		BarHeights:  bars,
-		FrameData:   image.NewRGBA(image.Rect(0, 0, 1920, 1080)),
+		Frame:        250,
+		TotalFrames:  1000,
+		FileSize:     12345678,
+		VideoCodec:   "H.264 1920×1080",
+		AudioCodec:   "AAC 44.1㎑ stereo",
+		EncoderName:  "h264_vaapi",
+		BarHeights:   bars,
+		Preview:      RenderPreview(DownsampleFrame(benchmarkFrame(1280, 720), DefaultPreviewConfig())),
+		PreviewFrame: 250,
 	}
 	for i := range m.spectrum.positions {
 		m.spectrum.positions[i] = 0.5

@@ -135,7 +135,7 @@ Unified terminal UI (`progress.go`) shows:
 - **Pass 2:** Progress bar, timing/ETA, audio profile (persisted), spectrum visualisation, video preview
 - **Completion:** Final progress state + consolidated summary with metrics from both passes
 
-Preview renders via Unicode blocks (`▁▂▃▄▅▆▇█`) using actual bar heights from renderer. Non-blocking goroutine channels prevent UI updates from stalling the encoding pipeline.
+Pass 2 down-samples rendered frames and sends a pre-rendered Unicode preview string at most every 100 ms. Progress updates reuse the latest preview between those sends, and non-blocking goroutine channels prevent UI updates from stalling the encoding pipeline.
 
 ---
 

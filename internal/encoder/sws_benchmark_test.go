@@ -104,22 +104,26 @@ func NewSwsConverter(width, height int) (*SwsConverter, error) {
 	}, nil
 }
 
-func (c *SwsConverter) Convert(rgbaData []byte, dstFrame *ffmpeg.AVFrame) error {
-	// Copy RGBA data into source frame
+func (c *SwsConverter) Upload(rgbaData []byte) {
 	srcLinesize := c.srcFrame.Linesize().Get(0)
 	srcData := c.srcFrame.Data().Get(0)
+	rowBytes := c.width * 4
 
 	for y := 0; y < c.height; y++ {
-		srcOffset := y * srcLinesize
-		rgbaOffset := y * c.width * 4
-		for x := 0; x < c.width*4; x++ {
-			*(*uint8)(unsafe.Add(srcData, srcOffset+x)) = rgbaData[rgbaOffset+x]
-		}
+		srcRow := unsafe.Slice((*byte)(unsafe.Add(srcData, y*srcLinesize)), rowBytes)
+		rgbaRow := rgbaData[y*rowBytes : (y+1)*rowBytes]
+		copy(srcRow, rgbaRow)
 	}
+}
 
-	// Use FFmpeg's swscale
-	_, err := ffmpeg.SwsScaleFrame(c.swsCtx, dstFrame, c.srcFrame)
-	return err
+func (c *SwsConverter) Scale(dstFrame *ffmpeg.AVFrame) error {
+	ret, err := ffmpeg.SwsScaleFrame(c.swsCtx, dstFrame, c.srcFrame)
+	return checkFFmpeg(ret, err, "SwsScaleFrame")
+}
+
+func (c *SwsConverter) Convert(rgbaData []byte, dstFrame *ffmpeg.AVFrame) error {
+	c.Upload(rgbaData)
+	return c.Scale(dstFrame)
 }
 
 func (c *SwsConverter) Close() {
@@ -184,9 +188,10 @@ func BenchmarkSwscaleRGBAToYUV(b *testing.B) {
 	}
 	defer converter.Close()
 
+	converter.Upload(rgbaData)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = converter.Convert(rgbaData, yuvFrame)
+		_ = converter.Scale(yuvFrame)
 	}
 }
 
@@ -212,8 +217,8 @@ func TestConversionEquivalence(t *testing.T) {
 	}
 	defer converter.Close()
 
-	err = converter.Convert(rgbaData, yuvFrameSws)
-	if err != nil {
+	converter.Upload(rgbaData)
+	if err := converter.Scale(yuvFrameSws); err != nil {
 		t.Fatalf("Swscale conversion failed: %v", err)
 	}
 
@@ -286,10 +291,11 @@ func TestBenchmarkSummary(t *testing.T) {
 		t.Fatalf("Failed to create sws converter: %v", err)
 	}
 	defer converter.Close()
+	converter.Upload(rgbaData)
 
 	swsStart := testing.Benchmark(func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_ = converter.Convert(rgbaData, yuvFrame)
+			_ = converter.Scale(yuvFrame)
 		}
 	})
 

@@ -114,19 +114,19 @@ func allocateFrame(name string, pixFmt ffmpeg.AVPixelFormat, width, height int) 
 	return frame, nil
 }
 
-func convertSwscale(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, swsCtx *ffmpeg.SwsContext, srcFrame *ffmpeg.AVFrame, width, height int) error {
-	// Copy RGBA data into source frame
+func uploadSwscaleSource(rgbaData []byte, srcFrame *ffmpeg.AVFrame, width, height int) {
 	srcLinesize := srcFrame.Linesize().Get(0)
 	srcData := srcFrame.Data().Get(0)
+	rowBytes := width * 4
 
 	for y := range height {
-		srcOffset := y * srcLinesize
-		rgbaOffset := y * width * 4
-		for x := 0; x < width*4; x++ {
-			*(*uint8)(unsafe.Add(srcData, srcOffset+x)) = rgbaData[rgbaOffset+x]
-		}
+		srcRow := unsafe.Slice((*byte)(unsafe.Add(srcData, y*srcLinesize)), rowBytes)
+		rgbaRow := rgbaData[y*rowBytes : (y+1)*rowBytes]
+		copy(srcRow, rgbaRow)
 	}
+}
 
+func scaleSwscale(yuvFrame *ffmpeg.AVFrame, swsCtx *ffmpeg.SwsContext, srcFrame *ffmpeg.AVFrame) error {
 	ret, err := ffmpeg.SwsScaleFrame(swsCtx, yuvFrame, srcFrame)
 	return checkFFmpeg(ret, err, "SwsScaleFrame")
 }
@@ -195,8 +195,9 @@ func run() error {
 		}
 		defer ffmpeg.AVFrameFree(&srcFrame)
 
+		uploadSwscaleSource(rgbaData, srcFrame, width, height)
 		for i := 0; i < *iterations; i++ {
-			if err := convertSwscale(rgbaData, yuvFrame, swsCtx, srcFrame, width, height); err != nil {
+			if err := scaleSwscale(yuvFrame, swsCtx, srcFrame); err != nil {
 				return err
 			}
 		}

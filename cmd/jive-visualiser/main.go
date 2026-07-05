@@ -397,16 +397,6 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 
 	runner.setupRenderState()
 
-	// Double-buffered private RGBA images for the preview. The render loop reuses
-	// the frame's internal image every iteration, so the UI goroutine must read a
-	// copy rather than the live buffer the next Draw will overwrite. A single copy
-	// is not enough: the UI still holds the pointer from the previous send while
-	// the render loop overwrites that same buffer on the next tick. Ping-pong
-	// between two buffers so the producer always fills the one the UI is not
-	// reading. Allocated once here, only when preview is enabled, to keep it off
-	// the hot path.
-	runner.setupPreviewBuffers()
-
 	// Sliding buffer for FFT: we read samplesPerFrame but need FFTSize for FFT.
 	// Derive from the file's actual sample rate so encoded audio and video
 	// durations stay aligned for any input rate.
