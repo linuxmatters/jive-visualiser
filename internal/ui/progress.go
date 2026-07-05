@@ -176,6 +176,7 @@ type Model struct {
 	cachedPreview   string
 	cachedFrameNum  int
 	completionDelay time.Duration
+	interrupted     bool
 }
 
 // boxDesignWidth is the fixed shared outer width for every bordered box. It is
@@ -389,6 +390,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if key.Matches(msg, keys.Quit) {
+			m.interrupted = true
 			return m, tea.Quit
 		}
 	}
@@ -437,6 +439,12 @@ func (m *Model) AssetWarnings() []string {
 		return nil
 	}
 	return m.complete.AssetWarnings
+}
+
+// Interrupted reports whether the user quit the live progress view before the
+// worker sent a completion message.
+func (m *Model) Interrupted() bool {
+	return m.interrupted
 }
 
 func (m *Model) renderCompletionView() string {
