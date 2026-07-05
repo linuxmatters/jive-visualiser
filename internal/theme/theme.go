@@ -7,22 +7,29 @@ import (
 	colorful "github.com/lucasb-eyer/go-colorful"
 )
 
-// Fire colour palette
-// Shared fire theme colours for consistent branding across CLI and TUI.
+// Fire colour palette: the single source of truth for brand colours across the
+// CLI and TUI. One vocabulary, one home. Every hex is distinct; do not collapse
+// values into each other.
+//
+// Renderer rule:
+//   - Spectrum ramp and TUI progress use the Fire* ramp colours (crimson → yellow).
+//   - The Lipgloss help renderer uses FireYellow, FireOrange, FireRed and WarmGray.
+//   - version/probe output uses FireDeepRed, FireGold, FireNeon and the neutral greys.
 var (
-	// Core fire colours (dark to bright)
+	// Fire ramp colours, dark to bright. FireCrimson → FireYellow also build the
+	// spectrum ramp below, so their order and values are load-bearing.
 	FireYellow  = lipgloss.Color("#FFD700") // Bright yellow
 	FireOrange  = lipgloss.Color("#FF8C00") // Deep orange
 	FireRed     = lipgloss.Color("#FF4500") // Orange-red
 	FireCrimson = lipgloss.Color("#DC143C") // Deep crimson
 
-	// Accent colours
-	WarmGray = lipgloss.Color("#B8860B") // Dark goldenrod for subtle text
+	// Fire accents for version and probe output.
+	FireDeepRed = lipgloss.Color("#A40000") // Deep red for titles and errors
+	FireGold    = lipgloss.Color("#FFA500") // Orange-gold for section headers
+	FireNeon    = lipgloss.Color("#FFFF00") // Bright yellow for highlighted values
 
-	// CLI output colours
-	JiveRed     = lipgloss.Color("#A40000") // Deep red for titles and errors
-	GoldOrange  = lipgloss.Color("#FFA500") // Orange-gold for section headers
-	NeonYellow  = lipgloss.Color("#FFFF00") // Bright yellow for highlighted values
+	// Neutral accents shared by CLI and TUI.
+	WarmGray    = lipgloss.Color("#B8860B") // Dark goldenrod for subtle text
 	NeutralGray = lipgloss.Color("#888888") // Neutral grey for keys and labels
 	BrightWhite = lipgloss.Color("#FFFFFF") // White for emphasised values
 )

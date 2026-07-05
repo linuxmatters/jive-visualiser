@@ -107,7 +107,6 @@ func TestUpdateRenderProgressStoresState(t *testing.T) {
 				TotalFrames:  1000,
 				Elapsed:      5 * time.Second,
 				FileSize:     1024,
-				Sensitivity:  1.5,
 				Preview:      "preview",
 				PreviewFrame: 250,
 				VideoCodec:   "libx264",
@@ -228,6 +227,46 @@ func TestAnalysisCompleteResetsProgressBar(t *testing.T) {
 	}
 	if w := got.progressBar.Width(); w != wantWidth {
 		t.Errorf("progress bar width after transition = %d, want %d (fixed design width not restored)", w, wantWidth)
+	}
+}
+
+// TestAnalysisCompleteSilentInputClampsDecibels guards the silent-file path. The
+// analyser reports a zero peak, RMS and dynamic range for silence, and
+// 20·log10(0) is -Inf. The AnalysisComplete handler must clamp to the finite
+// decibel floor so the summary shows "-120.0 ㏈" instead of "-Inf ㏈".
+func TestAnalysisCompleteSilentInputClampsDecibels(t *testing.T) {
+	m := NewModel(true)
+	next, _ := m.Update(AnalysisComplete{
+		PeakMagnitude: 0,
+		RMSLevel:      0,
+		DynamicRange:  0,
+		Duration:      60 * time.Second,
+		OptimalScale:  0.0075,
+		AnalysisTime:  time.Second,
+	})
+	got := asModel(t, next)
+
+	if got.audioProfile == nil {
+		t.Fatal("audioProfile = nil, want populated")
+	}
+	for name, level := range map[string]float64{
+		"PeakLevel":    got.audioProfile.PeakLevel,
+		"RMSLevel":     got.audioProfile.RMSLevel,
+		"DynamicRange": got.audioProfile.DynamicRange,
+	} {
+		if level != decibelFloor {
+			t.Errorf("%s = %v, want %v (decibel floor)", name, level, decibelFloor)
+		}
+	}
+
+	var s strings.Builder
+	writeAudioAnalysisSummary(&s, got.audioProfile, completionSummaryStyles{})
+	summary := stripStyles(s.String())
+	if strings.Contains(summary, "-Inf") {
+		t.Errorf("summary contains -Inf for silent input:\n%s", summary)
+	}
+	if !strings.Contains(summary, "-120.0 ㏈") {
+		t.Errorf("summary missing floor value -120.0 ㏈ for silent input:\n%s", summary)
 	}
 }
 
@@ -474,8 +513,8 @@ func TestUpdatePreviewCacheStoresFreshPreview(t *testing.T) {
 	if m.cachedFrameNum != 10 {
 		t.Fatalf("cachedFrameNum = %d, want 10", m.cachedFrameNum)
 	}
-	if got := renderLivePreviewBlock(false, m.cachedPreview); got != "fresh-preview" {
-		t.Fatalf("preview = %q, want fresh-preview", got)
+	if m.noPreview || m.cachedPreview != "fresh-preview" {
+		t.Fatalf("preview = %q, want fresh-preview", m.cachedPreview)
 	}
 }
 
@@ -491,8 +530,8 @@ func TestUpdatePreviewCacheReusesStalePreview(t *testing.T) {
 	if m.cachedFrameNum != 10 {
 		t.Fatalf("cachedFrameNum = %d, want 10", m.cachedFrameNum)
 	}
-	if got := renderLivePreviewBlock(false, m.cachedPreview); got != "cached-preview" {
-		t.Fatalf("preview = %q, want cached-preview", got)
+	if m.noPreview || m.cachedPreview != "cached-preview" {
+		t.Fatalf("preview = %q, want cached-preview", m.cachedPreview)
 	}
 }
 
@@ -508,8 +547,8 @@ func TestUpdatePreviewCacheHonoursNoPreview(t *testing.T) {
 	if m.cachedFrameNum != 9 {
 		t.Fatalf("cachedFrameNum = %d, want 9", m.cachedFrameNum)
 	}
-	if got := renderLivePreviewBlock(true, m.cachedPreview); got != "" {
-		t.Fatalf("preview = %q, want empty preview", got)
+	if !m.noPreview {
+		t.Fatal("noPreview = false, want true so the preview block stays hidden")
 	}
 }
 

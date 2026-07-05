@@ -77,7 +77,23 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		return
 	}
 
-	defer runner.enc.Close()
+	// Close strategy: the encoder is closed exactly once, here, on every path
+	// (success and error). reachedEnd records whether rendering finished. On an
+	// error path the deferred Close only frees resources; the failure was
+	// already reported. On the success path a Close failure is fatal (a dropped
+	// trailer truncates the file), so it is surfaced in place of sendComplete.
+	reachedEnd := false
+	defer func() {
+		closeErr := runner.closeEncoder()
+		if !reachedEnd {
+			return
+		}
+		if closeErr != nil {
+			runner.fail(closeErr)
+			return
+		}
+		runner.sendComplete()
+	}()
 
 	// Asset load failures are non-fatal: nil assets degrade gracefully, but warn
 	// so dropped assets are not silent.
@@ -142,12 +158,7 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 		return
 	}
 
-	// A Close failure is fatal: the trailer never lands and the file is
-	// truncated.
-	if err := runner.closeEncoder(); err != nil {
-		runner.fail(err)
-		return
-	}
-
-	runner.sendComplete()
+	// The deferred close finalises the encoder and, on success, reports
+	// completion or a fatal Close error.
+	reachedEnd = true
 }

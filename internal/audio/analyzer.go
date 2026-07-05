@@ -130,6 +130,9 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 	profile.Duration = float64(frameNum*samplesPerFrame) / float64(reader.SampleRate())
 
 	profile.GlobalPeak = maxPeak
+	// Mean of per-window RMS values over overlapping FFT windows, not the true RMS
+	// of the signal. DynamicRange derived from it is a relative bar-scaling
+	// heuristic, not a calibrated dB figure.
 	profile.GlobalRMS = sumRMS / float64(profile.NumFrames)
 
 	if profile.GlobalRMS > 0 {
