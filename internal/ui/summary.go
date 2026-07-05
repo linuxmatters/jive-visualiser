@@ -58,10 +58,16 @@ func writeCompletionOverview(s *strings.Builder, complete RenderComplete, dimLab
 	fmt.Fprintf(s, "%s%s\n", dimLabel.Render("Output:   "), complete.OutputFile)
 
 	videoDuration := time.Duration(complete.TotalFrames) * time.Second / config.FPS
-	fmt.Fprintf(s, "%s%d frames, %.2f fps average\n",
-		dimLabel.Render("Video:    "),
-		complete.TotalFrames,
-		float64(complete.TotalFrames)/videoDuration.Seconds())
+	if seconds := videoDuration.Seconds(); seconds > 0 {
+		fmt.Fprintf(s, "%s%d frames, %.2f fps average\n",
+			dimLabel.Render("Video:    "),
+			complete.TotalFrames,
+			float64(complete.TotalFrames)/seconds)
+	} else {
+		fmt.Fprintf(s, "%s%d frames\n",
+			dimLabel.Render("Video:    "),
+			complete.TotalFrames)
+	}
 	if complete.SamplesProcessed > 0 {
 		fmt.Fprintf(s, "%s%d samples processed\n\n", dimLabel.Render("Audio:    "), complete.SamplesProcessed)
 	} else {

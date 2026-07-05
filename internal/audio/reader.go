@@ -79,24 +79,14 @@ func NewStreamingReader(filename string) (*StreamingReader, error) {
 		return nil, fmt.Errorf("failed to allocate codec context")
 	}
 
-	ret, err := ffmpeg.AVCodecParametersToContext(d.codecCtx, audioStream.Codecpar())
-	if err != nil {
+	if _, err := ffmpeg.AVCodecParametersToContext(d.codecCtx, audioStream.Codecpar()); err != nil {
 		d.Close()
 		return nil, fmt.Errorf("failed to copy codec parameters: %w", err)
 	}
-	if ret < 0 {
-		d.Close()
-		return nil, fmt.Errorf("failed to copy codec parameters: error code %d", ret)
-	}
 
-	ret, err = ffmpeg.AVCodecOpen2(d.codecCtx, decoder, nil)
-	if err != nil {
+	if _, err := ffmpeg.AVCodecOpen2(d.codecCtx, decoder, nil); err != nil {
 		d.Close()
 		return nil, fmt.Errorf("failed to open codec: %w", err)
-	}
-	if ret < 0 {
-		d.Close()
-		return nil, fmt.Errorf("failed to open codec: error code %d", ret)
 	}
 
 	d.sampleRate = d.codecCtx.SampleRate()
@@ -136,23 +126,20 @@ func (d *StreamingReader) initResampler() error {
 	outLayout := d.outLayoutFrame.ChLayout()
 	ffmpeg.AVChannelLayoutDefault(outLayout, 1)
 
-	ret, err := ffmpeg.SwrAllocSetOpts2(
+	if _, err := ffmpeg.SwrAllocSetOpts2(
 		&d.swr,
 		outLayout, ffmpeg.AVSampleFmtDbl, d.sampleRate,
 		d.codecCtx.ChLayout(), d.codecCtx.SampleFmt(), d.sampleRate,
 		0, nil,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("failed to configure resampler: %w", err)
 	}
-	if ret < 0 || d.swr == nil {
-		return fmt.Errorf("failed to configure resampler: error code %d", ret)
+	if d.swr == nil {
+		return fmt.Errorf("failed to configure resampler: swr context is nil")
 	}
 
-	if ret, err := ffmpeg.SwrInit(d.swr); err != nil {
+	if _, err := ffmpeg.SwrInit(d.swr); err != nil {
 		return fmt.Errorf("failed to initialise resampler: %w", err)
-	} else if ret < 0 {
-		return fmt.Errorf("failed to initialise resampler: error code %d", ret)
 	}
 
 	if err := d.growOutputBuffer(swrOutBufferSamples); err != nil {
@@ -205,7 +192,7 @@ func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 
 	// Decode more packets until the buffer holds enough samples.
 	for d.unreadSamples() < numSamples {
-		ret, err := ffmpeg.AVReadFrame(d.formatCtx, d.packet)
+		_, err := ffmpeg.AVReadFrame(d.formatCtx, d.packet)
 		if err != nil {
 			if errors.Is(err, ffmpeg.AVErrorEOF) {
 				// End of stream: flush the decoder once to recover any frames
@@ -228,9 +215,6 @@ func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 				return 0, io.EOF
 			}
 			return 0, fmt.Errorf("failed to read packet: %w", err)
-		}
-		if ret < 0 {
-			return 0, fmt.Errorf("failed to read packet: error code %d", ret)
 		}
 
 		if d.packet.StreamIndex() != d.streamIndex {

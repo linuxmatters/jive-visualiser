@@ -39,6 +39,9 @@ jobs:
           go install github.com/gordonklaus/ineffassign@v0.2.0
           ineffassign ./...
       - uses: golangci/golangci-lint-action@v9
+        with:
+          # Pin golangci-lint so CI matches the dev shell (flake.nix nixpkgs pin)
+          version: v2.12.2
 
   lint-actions:
     name: Lint Action ⚙️
@@ -111,6 +114,8 @@ jobs:
           cd third_party/ffmpeg-statigo
           go run ./cmd/download-lib
       - name: Test
+        env:
+          CGO_ENABLED: "1" # FFmpeg static bindings require cgo
         run: go test ./...
 
   security:
@@ -214,6 +219,8 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building jive-visualiser $VERSION for ${{ matrix.os }}/${{ matrix.arch }}"
       - name: Build binary
+        env:
+          CGO_ENABLED: "1" # FFmpeg static bindings require cgo
         run: |
           go build -ldflags="-X main.version=${{ steps.version.outputs.version }}" -o jive-visualiser-${{ matrix.os }}-${{ matrix.arch }} ./cmd/jive-visualiser
       - name: Upload artifact

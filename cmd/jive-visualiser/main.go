@@ -27,12 +27,12 @@ type cliOptions struct {
 	Probe           bool   `help:"Probe and display available hardware encoders"`
 }
 
-// CLI holds the parsed command-line flags and positional arguments.
-var CLI cliOptions
-
 func main() {
+	// opts holds the parsed command-line flags and positional arguments.
+	var opts cliOptions
+
 	ctx := kong.Parse(
-		&CLI,
+		&opts,
 		kong.Name("jive-visualiser"),
 		kong.Description("Spin your podcast .wav into a groovy MP4 visualiser."),
 		kong.Vars{"version": version},
@@ -40,23 +40,23 @@ func main() {
 		kong.Help(cli.StyledHelpPrinter()),
 	)
 
-	if CLI.Version {
+	if opts.Version {
 		cli.PrintVersion(version)
 		os.Exit(0)
 	}
 
-	if CLI.Probe {
+	if opts.Probe {
 		probeHardwareEncoders()
 		os.Exit(0)
 	}
 
 	// No arguments: show usage instead of erroring
-	if CLI.Input == "" && CLI.Output == "" {
+	if opts.Input == "" && opts.Output == "" {
 		_ = ctx.PrintUsage(true)
 		os.Exit(0)
 	}
 
-	runConfig, err := newRunConfig(CLI)
+	runConfig, err := newRunConfig(opts)
 	if err != nil {
 		cli.PrintError(err.Error())
 		os.Exit(1)

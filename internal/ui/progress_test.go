@@ -464,60 +464,52 @@ func TestUpdateSpinnerTick(t *testing.T) {
 	}
 }
 
-func TestRenderLivePreviewBlockCachesFreshPreview(t *testing.T) {
-	preview, cachedPreview, cachedFrameNum := renderLivePreviewBlock(
-		false,
-		RenderProgress{Frame: 10, Preview: "fresh-preview", PreviewFrame: 10},
-		"",
-		0,
-	)
+func TestUpdatePreviewCacheStoresFreshPreview(t *testing.T) {
+	m := NewModel(false)
+	m.updatePreviewCache(RenderProgress{Frame: 10, Preview: "fresh-preview", PreviewFrame: 10})
 
-	if preview != "fresh-preview" {
-		t.Fatalf("preview = %q, want fresh-preview", preview)
+	if m.cachedPreview != "fresh-preview" {
+		t.Fatalf("cachedPreview = %q, want fresh-preview", m.cachedPreview)
 	}
-	if cachedPreview != "fresh-preview" {
-		t.Fatalf("cachedPreview = %q, want fresh-preview", cachedPreview)
+	if m.cachedFrameNum != 10 {
+		t.Fatalf("cachedFrameNum = %d, want 10", m.cachedFrameNum)
 	}
-	if cachedFrameNum != 10 {
-		t.Fatalf("cachedFrameNum = %d, want 10", cachedFrameNum)
+	if got := renderLivePreviewBlock(false, m.cachedPreview); got != "fresh-preview" {
+		t.Fatalf("preview = %q, want fresh-preview", got)
 	}
 }
 
-func TestRenderLivePreviewBlockReusesStalePreview(t *testing.T) {
-	preview, cachedPreview, cachedFrameNum := renderLivePreviewBlock(
-		false,
-		RenderProgress{Frame: 11},
-		"cached-preview",
-		10,
-	)
+func TestUpdatePreviewCacheReusesStalePreview(t *testing.T) {
+	m := NewModel(false)
+	m.cachedPreview = "cached-preview"
+	m.cachedFrameNum = 10
+	m.updatePreviewCache(RenderProgress{Frame: 11})
 
-	if preview != "cached-preview" {
-		t.Fatalf("preview = %q, want cached-preview", preview)
+	if m.cachedPreview != "cached-preview" {
+		t.Fatalf("cachedPreview = %q, want cached-preview", m.cachedPreview)
 	}
-	if cachedPreview != "cached-preview" {
-		t.Fatalf("cachedPreview = %q, want cached-preview", cachedPreview)
+	if m.cachedFrameNum != 10 {
+		t.Fatalf("cachedFrameNum = %d, want 10", m.cachedFrameNum)
 	}
-	if cachedFrameNum != 10 {
-		t.Fatalf("cachedFrameNum = %d, want 10", cachedFrameNum)
+	if got := renderLivePreviewBlock(false, m.cachedPreview); got != "cached-preview" {
+		t.Fatalf("preview = %q, want cached-preview", got)
 	}
 }
 
-func TestRenderLivePreviewBlockHonoursNoPreview(t *testing.T) {
-	preview, cachedPreview, cachedFrameNum := renderLivePreviewBlock(
-		true,
-		RenderProgress{Frame: 10, Preview: "fresh-preview", PreviewFrame: 10},
-		"cached-preview",
-		9,
-	)
+func TestUpdatePreviewCacheHonoursNoPreview(t *testing.T) {
+	m := NewModel(true)
+	m.cachedPreview = "cached-preview"
+	m.cachedFrameNum = 9
+	m.updatePreviewCache(RenderProgress{Frame: 10, Preview: "fresh-preview", PreviewFrame: 10})
 
-	if preview != "" {
-		t.Fatalf("preview = %q, want empty preview", preview)
+	if m.cachedPreview != "cached-preview" {
+		t.Fatalf("cachedPreview = %q, want cached-preview", m.cachedPreview)
 	}
-	if cachedPreview != "cached-preview" {
-		t.Fatalf("cachedPreview = %q, want cached-preview", cachedPreview)
+	if m.cachedFrameNum != 9 {
+		t.Fatalf("cachedFrameNum = %d, want 9", m.cachedFrameNum)
 	}
-	if cachedFrameNum != 9 {
-		t.Fatalf("cachedFrameNum = %d, want 9", cachedFrameNum)
+	if got := renderLivePreviewBlock(true, m.cachedPreview); got != "" {
+		t.Fatalf("preview = %q, want empty preview", got)
 	}
 }
 

@@ -9,6 +9,13 @@ import (
 	"golang.org/x/image/font"
 )
 
+// The black-clear loop in Draw copies the frame buffer 32 bytes (8 pixels) at a
+// time and relies on the buffer length being an exact multiple of 32. This
+// compile-time guard fails the build with an unsigned-integer underflow if a
+// resolution change ever breaks that assumption, so nobody has to remember the
+// dependency. Width*Height*4 = 3,686,400 for 1280x720, which is a multiple of 32.
+const _ = uint(0) - uint(config.Width*config.Height*4%32)
+
 // PodcastMeta bundles the episode metadata shown on a frame and thumbnail.
 // A nil Episode means no episode number was supplied; the renderer then omits
 // the episode overlay entirely rather than drawing a placeholder.
@@ -132,6 +139,8 @@ func (f *Frame) Draw(barHeights []float64) {
 		copy(f.img.Pix, f.bgImage.Pix)
 	} else {
 		// Clear to black 8 pixels (32 bytes) per copy for better memory bandwidth.
+		// This stride assumes len(Pix) is a multiple of 32; the package-level
+		// compile-time guard above enforces that for the fixed resolution.
 		blackPattern := [32]byte{
 			0, 0, 0, 255, 0, 0, 0, 255,
 			0, 0, 0, 255, 0, 0, 0, 255,
