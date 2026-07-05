@@ -50,7 +50,7 @@ setup:
 
     # Check current version
     cd third_party/ffmpeg-statigo
-    git fetch --tags
+    git fetch --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
     CURRENT=$(git describe --tags --exact-match 2>/dev/null || echo "")
 
     if [ "$CURRENT" = "$TAG" ]; then
