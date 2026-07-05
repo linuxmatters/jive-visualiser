@@ -3,6 +3,7 @@ package encoder
 import (
 	"os"
 	"runtime"
+	"sort"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
 
@@ -31,28 +32,206 @@ type HWEncoder struct {
 	Description string // Human-readable description
 }
 
-// encoderSpec defines a hardware encoder configuration for priority lists
-type encoderSpec struct {
-	name       string
-	accelType  HWAccelType
-	deviceType ffmpeg.AVHWDeviceType
-	desc       string
+type hwEncoderOptionPolicy int
+
+const (
+	hwEncoderOptionsNone hwEncoderOptionPolicy = iota
+	hwEncoderOptionsSoftware
+	hwEncoderOptionsNVENC
+	hwEncoderOptionsQSV
+	hwEncoderOptionsVAAPI
+	hwEncoderOptionsVulkan
+	hwEncoderOptionsVideoToolbox
+)
+
+type hwEncoderPriority struct {
+	linux  int
+	darwin int
 }
 
-// linuxEncoderPriority defines the encoder preference order for Linux
-// Priority: nvenc > qsv > vaapi > vulkan > software
-// VAAPI is preferred over Vulkan as it has broader hardware support (AMD, Intel, older Intel)
-var linuxEncoderPriority = []encoderSpec{
-	{"h264_nvenc", HWAccelNVENC, ffmpeg.AVHWDeviceTypeCuda, "NVIDIA NVENC"},
-	{"h264_qsv", HWAccelQSV, ffmpeg.AVHWDeviceTypeQsv, "Intel Quick Sync Video"},
-	{"h264_vaapi", HWAccelVAAPI, ffmpeg.AVHWDeviceTypeVaapi, "VA-API"},
-	{"h264_vulkan", HWAccelVulkan, ffmpeg.AVHWDeviceTypeVulkan, "Vulkan Video"},
+func (p hwEncoderPriority) forGOOS(goos string) int {
+	if goos == "darwin" {
+		return p.darwin
+	}
+	return p.linux
 }
 
-// macOSEncoderPriority defines the encoder preference order for macOS
-// Priority: videotoolbox > software
-var macOSEncoderPriority = []encoderSpec{
-	{"h264_videotoolbox", HWAccelVideoToolbox, ffmpeg.AVHWDeviceTypeVideotoolbox, "Apple VideoToolbox"},
+type hwEncoderRegistryEntry struct {
+	cliName            string
+	ffmpegName         string
+	accelType          HWAccelType
+	deviceType         ffmpeg.AVHWDeviceType
+	description        string
+	priority           hwEncoderPriority
+	probePixelFormat   ffmpeg.AVPixelFormat
+	runtimePixelFormat ffmpeg.AVPixelFormat
+	optionPolicy       hwEncoderOptionPolicy
+	cliSelectable      bool
+}
+
+func (entry hwEncoderRegistryEntry) toHWEncoder(available bool) HWEncoder {
+	return HWEncoder{
+		Name:        entry.ffmpegName,
+		Type:        entry.accelType,
+		DeviceType:  entry.deviceType,
+		Description: entry.description,
+		Available:   available,
+	}
+}
+
+var hwEncoderRegistry = []hwEncoderRegistryEntry{
+	{
+		cliName:            "auto",
+		accelType:          HWAccelAuto,
+		deviceType:         ffmpeg.AVHWDeviceTypeNone,
+		description:        "Auto-detect best available",
+		priority:           hwEncoderPriority{},
+		probePixelFormat:   ffmpeg.AVPixFmtNone,
+		runtimePixelFormat: ffmpeg.AVPixFmtNone,
+		optionPolicy:       hwEncoderOptionsNone,
+		cliSelectable:      true,
+	},
+	{
+		cliName:            "software",
+		ffmpegName:         "libx264",
+		accelType:          HWAccelNone,
+		deviceType:         ffmpeg.AVHWDeviceTypeNone,
+		description:        "Software encoding",
+		priority:           hwEncoderPriority{linux: 100, darwin: 100},
+		probePixelFormat:   ffmpeg.AVPixFmtYuv420P,
+		runtimePixelFormat: ffmpeg.AVPixFmtYuv420P,
+		optionPolicy:       hwEncoderOptionsSoftware,
+		cliSelectable:      true,
+	},
+	{
+		cliName:            "nvenc",
+		ffmpegName:         "h264_nvenc",
+		accelType:          HWAccelNVENC,
+		deviceType:         ffmpeg.AVHWDeviceTypeCuda,
+		description:        "NVIDIA NVENC",
+		priority:           hwEncoderPriority{linux: 10},
+		probePixelFormat:   ffmpeg.AVPixFmtRgba,
+		runtimePixelFormat: ffmpeg.AVPixFmtRgba,
+		optionPolicy:       hwEncoderOptionsNVENC,
+		cliSelectable:      true,
+	},
+	{
+		cliName:            "qsv",
+		ffmpegName:         "h264_qsv",
+		accelType:          HWAccelQSV,
+		deviceType:         ffmpeg.AVHWDeviceTypeQsv,
+		description:        "Intel Quick Sync Video",
+		priority:           hwEncoderPriority{linux: 20},
+		probePixelFormat:   ffmpeg.AVPixFmtQsv,
+		runtimePixelFormat: ffmpeg.AVPixFmtQsv,
+		optionPolicy:       hwEncoderOptionsQSV,
+		cliSelectable:      true,
+	},
+	{
+		cliName:            "vaapi",
+		ffmpegName:         "h264_vaapi",
+		accelType:          HWAccelVAAPI,
+		deviceType:         ffmpeg.AVHWDeviceTypeVaapi,
+		description:        "VA-API",
+		priority:           hwEncoderPriority{linux: 30},
+		probePixelFormat:   ffmpeg.AVPixFmtVaapi,
+		runtimePixelFormat: ffmpeg.AVPixFmtVaapi,
+		optionPolicy:       hwEncoderOptionsVAAPI,
+		cliSelectable:      true,
+	},
+	{
+		cliName:            "vulkan",
+		ffmpegName:         "h264_vulkan",
+		accelType:          HWAccelVulkan,
+		deviceType:         ffmpeg.AVHWDeviceTypeVulkan,
+		description:        "Vulkan Video",
+		priority:           hwEncoderPriority{linux: 40},
+		probePixelFormat:   ffmpeg.AVPixFmtVulkan,
+		runtimePixelFormat: ffmpeg.AVPixFmtVulkan,
+		optionPolicy:       hwEncoderOptionsVulkan,
+		cliSelectable:      true,
+	},
+	{
+		cliName:            "videotoolbox",
+		ffmpegName:         "h264_videotoolbox",
+		accelType:          HWAccelVideoToolbox,
+		deviceType:         ffmpeg.AVHWDeviceTypeVideotoolbox,
+		description:        "Apple VideoToolbox",
+		priority:           hwEncoderPriority{darwin: 10},
+		probePixelFormat:   ffmpeg.AVPixFmtVideotoolbox,
+		runtimePixelFormat: ffmpeg.AVPixFmtVideotoolbox,
+		optionPolicy:       hwEncoderOptionsVideoToolbox,
+		cliSelectable:      false,
+	},
+}
+
+var cliEncoderNames = []string{"auto", "nvenc", "qsv", "vaapi", "vulkan", "software"}
+
+// ValidCLIEncoderNames returns encoder names accepted by the --encoder flag.
+func ValidCLIEncoderNames() []string {
+	names := make([]string, len(cliEncoderNames))
+	copy(names, cliEncoderNames)
+	return names
+}
+
+// HWAccelTypeForCLIName maps a CLI encoder name to its hardware acceleration type.
+func HWAccelTypeForCLIName(name string) (HWAccelType, bool) {
+	entry, ok := hwEncoderRegistryEntryForCLIName(name)
+	if !ok {
+		return "", false
+	}
+	return entry.accelType, true
+}
+
+func hwEncoderRegistryEntryForCLIName(name string) (hwEncoderRegistryEntry, bool) {
+	for _, entry := range hwEncoderRegistry {
+		if entry.cliName == name && entry.cliSelectable {
+			return entry, true
+		}
+	}
+	return hwEncoderRegistryEntry{}, false
+}
+
+func hwEncoderRegistryEntryForType(accelType HWAccelType) (hwEncoderRegistryEntry, bool) {
+	for _, entry := range hwEncoderRegistry {
+		if entry.accelType == accelType {
+			return entry, true
+		}
+	}
+	return hwEncoderRegistryEntry{}, false
+}
+
+func hwEncoderRegistryEntryForHWEncoder(encoder *HWEncoder) (hwEncoderRegistryEntry, bool) {
+	if encoder == nil {
+		return hwEncoderRegistryEntry{}, false
+	}
+	entry, ok := hwEncoderRegistryEntryForType(encoder.Type)
+	if !ok {
+		return hwEncoderRegistryEntry{}, false
+	}
+	if encoder.Name != "" && entry.ffmpegName != "" && encoder.Name != entry.ffmpegName {
+		return hwEncoderRegistryEntry{}, false
+	}
+	return entry, true
+}
+
+func hardwareEncoderRegistryForOS(goos string) []hwEncoderRegistryEntry {
+	var entries []hwEncoderRegistryEntry
+	for _, entry := range hwEncoderRegistry {
+		if entry.accelType == HWAccelNone || entry.accelType == HWAccelAuto {
+			continue
+		}
+		if entry.priority.forGOOS(goos) == 0 {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].priority.forGOOS(goos) < entries[j].priority.forGOOS(goos)
+	})
+
+	return entries
 }
 
 // suppressHWProbeLogging temporarily silences FFmpeg and libva logging during
@@ -110,11 +289,11 @@ func setupTestHWFramesContext(hwDeviceCtx *ffmpeg.AVBufferRef, codecCtx *ffmpeg.
 // configure and open the encoder with proper hardware context. This catches cases
 // where a hardware device exists but doesn't support the specific encoder
 // (e.g., Intel iGPU with Vulkan but no Vulkan Video encoding support).
-func testEncoderAvailable(encoderName string, deviceType ffmpeg.AVHWDeviceType, accelType HWAccelType) bool {
+func testEncoderAvailable(entry hwEncoderRegistryEntry) bool {
 	restoreLogging := suppressHWProbeLogging()
 	defer restoreLogging()
 
-	encName := ffmpeg.ToCStr(encoderName)
+	encName := ffmpeg.ToCStr(entry.ffmpegName)
 	defer encName.Free()
 	codec := ffmpeg.AVCodecFindEncoderByName(encName)
 	if codec == nil {
@@ -122,7 +301,7 @@ func testEncoderAvailable(encoderName string, deviceType ffmpeg.AVHWDeviceType, 
 	}
 
 	var hwDeviceCtx *ffmpeg.AVBufferRef
-	ret, _ := ffmpeg.AVHWDeviceCtxCreate(&hwDeviceCtx, deviceType, nil, nil, 0)
+	ret, _ := ffmpeg.AVHWDeviceCtxCreate(&hwDeviceCtx, entry.deviceType, nil, nil, 0)
 	if ret < 0 || hwDeviceCtx == nil {
 		return false
 	}
@@ -140,46 +319,15 @@ func testEncoderAvailable(encoderName string, deviceType ffmpeg.AVHWDeviceType, 
 	codecCtx.SetTimeBase(ffmpeg.AVMakeQ(1, config.FPS))
 	codecCtx.SetFramerate(ffmpeg.AVMakeQ(config.FPS, 1))
 
-	// Set pixel format based on encoder type
-	switch accelType {
-	case HWAccelNVENC:
-		// NVENC can accept RGBA directly
-		codecCtx.SetPixFmt(ffmpeg.AVPixFmtRgba)
+	codecCtx.SetPixFmt(entry.probePixelFormat)
+	if entry.probePixelFormat == ffmpeg.AVPixFmtRgba {
 		codecCtx.SetHwDeviceCtx(ffmpeg.AVBufferRef_(hwDeviceCtx))
-	case HWAccelVulkan:
-		// Vulkan requires hardware frames context
-		codecCtx.SetPixFmt(ffmpeg.AVPixFmtVulkan)
-		hwFramesRef := setupTestHWFramesContext(hwDeviceCtx, codecCtx, ffmpeg.AVPixFmtVulkan)
+	} else {
+		hwFramesRef := setupTestHWFramesContext(hwDeviceCtx, codecCtx, entry.probePixelFormat)
 		if hwFramesRef == nil {
 			return false
 		}
 		defer ffmpeg.AVBufferUnref(&hwFramesRef)
-	case HWAccelQSV:
-		// QSV requires hardware frames context
-		codecCtx.SetPixFmt(ffmpeg.AVPixFmtQsv)
-		hwFramesRef := setupTestHWFramesContext(hwDeviceCtx, codecCtx, ffmpeg.AVPixFmtQsv)
-		if hwFramesRef == nil {
-			return false
-		}
-		defer ffmpeg.AVBufferUnref(&hwFramesRef)
-	case HWAccelVAAPI:
-		// VA-API requires hardware frames context
-		codecCtx.SetPixFmt(ffmpeg.AVPixFmtVaapi)
-		hwFramesRef := setupTestHWFramesContext(hwDeviceCtx, codecCtx, ffmpeg.AVPixFmtVaapi)
-		if hwFramesRef == nil {
-			return false
-		}
-		defer ffmpeg.AVBufferUnref(&hwFramesRef)
-	case HWAccelVideoToolbox:
-		// VideoToolbox requires hardware frames context with NV12 software format
-		codecCtx.SetPixFmt(ffmpeg.AVPixFmtVideotoolbox)
-		hwFramesRef := setupTestHWFramesContext(hwDeviceCtx, codecCtx, ffmpeg.AVPixFmtVideotoolbox)
-		if hwFramesRef == nil {
-			return false
-		}
-		defer ffmpeg.AVBufferUnref(&hwFramesRef)
-	default:
-		return false
 	}
 
 	// Try to open the encoder - this is the definitive test
@@ -192,30 +340,14 @@ func testEncoderAvailable(encoderName string, deviceType ffmpeg.AVHWDeviceType, 
 func DetectHWEncoders() []HWEncoder {
 	var encoders []HWEncoder
 
-	// Select encoder list based on OS
-	var priority []encoderSpec
-
-	switch runtime.GOOS {
-	case "darwin":
-		priority = macOSEncoderPriority
-	default: // Linux and others
-		priority = linuxEncoderPriority
-	}
-
 	// Check each encoder in priority order
-	for _, enc := range priority {
-		encoder := HWEncoder{
-			Name:        enc.name,
-			Type:        enc.accelType,
-			DeviceType:  enc.deviceType,
-			Description: enc.desc,
-			Available:   false,
-		}
+	for _, entry := range hardwareEncoderRegistryForOS(runtime.GOOS) {
+		encoder := entry.toHWEncoder(false)
 
 		// Perform comprehensive encoder test - this actually attempts to open
 		// the encoder with proper hardware context, catching cases where the
 		// hardware device exists but doesn't support the specific encoder
-		encoder.Available = testEncoderAvailable(enc.name, enc.deviceType, enc.accelType)
+		encoder.Available = testEncoderAvailable(entry)
 
 		encoders = append(encoders, encoder)
 	}
@@ -245,13 +377,11 @@ func SelectBestEncoderFrom(encoders []HWEncoder, requestedType HWAccelType) *HWE
 	}
 
 	if requestedType == HWAccelAuto {
-		// Return first available encoder from the priority list
-		for i := range encoders {
-			if encoders[i].Available {
-				return &encoders[i]
-			}
-		}
-		return nil // No hardware available, fall back to software
+		return selectBestAvailableEncoderFromRegistry(encoders, runtime.GOOS)
+	}
+
+	if _, ok := hwEncoderRegistryEntryForType(requestedType); !ok {
+		return nil // Unknown hardware type
 	}
 
 	// Look for specifically requested encoder type
@@ -265,4 +395,15 @@ func SelectBestEncoderFrom(encoders []HWEncoder, requestedType HWAccelType) *HWE
 	}
 
 	return nil // Requested type not found
+}
+
+func selectBestAvailableEncoderFromRegistry(encoders []HWEncoder, goos string) *HWEncoder {
+	for _, entry := range hardwareEncoderRegistryForOS(goos) {
+		for i := range encoders {
+			if encoders[i].Type == entry.accelType && encoders[i].Available {
+				return &encoders[i]
+			}
+		}
+	}
+	return nil
 }

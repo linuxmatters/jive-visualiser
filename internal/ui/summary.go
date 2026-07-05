@@ -14,82 +14,106 @@ import (
 func (m *Model) renderComplete() string {
 	var s strings.Builder
 
-	title := lipgloss.NewStyle().
+	s.WriteString(renderCompleteTitle())
+	s.WriteString("\n\n")
+
+	styles := completionSummaryStyles{
+		dimLabel:            lipgloss.NewStyle().Faint(true),
+		header:              lipgloss.NewStyle().Bold(true).Foreground(theme.FireOrange),
+		label:               lipgloss.NewStyle().Faint(true),
+		value:               lipgloss.NewStyle(),
+		highlightValueStyle: lipgloss.NewStyle().Foreground(theme.FireOrange),
+	}
+
+	writeCompletionOverview(&s, *m.complete, styles.dimLabel)
+	writeAudioAnalysisSummary(&s, m.audioProfile, styles)
+	writeRenderPerformanceSummary(&s, *m.complete, styles, m.summaryBar.ViewAs)
+
+	return lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(theme.FireOrange).
+		Padding(1, 1).
+		Width(m.boxContentWidth()).
+		Render(s.String()) + "\n"
+}
+
+type completionSummaryStyles struct {
+	dimLabel            lipgloss.Style
+	header              lipgloss.Style
+	label               lipgloss.Style
+	value               lipgloss.Style
+	highlightValueStyle lipgloss.Style
+}
+
+func renderCompleteTitle() string {
+	return lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.FireYellow).
 		Render("✓ Encoding Complete!")
+}
 
-	s.WriteString(title)
-	s.WriteString("\n\n")
+func writeCompletionOverview(s *strings.Builder, complete RenderComplete, dimLabel lipgloss.Style) {
+	// Size, source duration, total time taken and the encoder live in the
+	// finished Pass 2 box above, so they are omitted here.
+	fmt.Fprintf(s, "%s%s\n", dimLabel.Render("Output:   "), complete.OutputFile)
 
-	// Styles for output summary
-	dimLabel := lipgloss.NewStyle().Faint(true)
-
-	// Output summary. Size, source duration, total time taken and the encoder now
-	// live in the finished Pass 2 box above, so they are omitted here.
-	fmt.Fprintf(&s, "%s%s\n", dimLabel.Render("Output:   "), m.complete.OutputFile)
-
-	videoDuration := time.Duration(m.complete.TotalFrames) * time.Second / config.FPS
-	fmt.Fprintf(&s, "%s%d frames, %.2f fps average\n",
+	videoDuration := time.Duration(complete.TotalFrames) * time.Second / config.FPS
+	fmt.Fprintf(s, "%s%d frames, %.2f fps average\n",
 		dimLabel.Render("Video:    "),
-		m.complete.TotalFrames,
-		float64(m.complete.TotalFrames)/videoDuration.Seconds())
-	if m.complete.SamplesProcessed > 0 {
-		fmt.Fprintf(&s, "%s%d samples processed\n\n", dimLabel.Render("Audio:    "), m.complete.SamplesProcessed)
+		complete.TotalFrames,
+		float64(complete.TotalFrames)/videoDuration.Seconds())
+	if complete.SamplesProcessed > 0 {
+		fmt.Fprintf(s, "%s%d samples processed\n\n", dimLabel.Render("Audio:    "), complete.SamplesProcessed)
 	} else {
 		s.WriteString("\n")
 	}
+}
 
-	// Audio Profile section
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(theme.FireOrange)
-	labelStyle := lipgloss.NewStyle().Faint(true)
-	valueStyle := lipgloss.NewStyle()
-	highlightValueStyle := lipgloss.NewStyle().Foreground(theme.FireOrange)
-
-	totalMs := m.complete.TotalTime.Milliseconds()
-	if totalMs == 0 {
-		totalMs = 1
-	}
-
-	s.WriteString(headerStyle.Render("Pass 1: Audio Analysis"))
+func writeAudioAnalysisSummary(s *strings.Builder, profile *AudioProfile, styles completionSummaryStyles) {
+	s.WriteString(styles.header.Render("Pass 1: Audio Analysis"))
 	s.WriteString("\n")
 
-	// Pass 1 table: a borderless two-column label/value grid. The table handles
-	// column alignment, and renders borderless so it nests inside the
-	// rounded-border box without double chrome.
-	if m.audioProfile != nil {
+	if profile != nil {
 		pass1 := summaryTable().StyleFunc(func(_, col int) lipgloss.Style {
 			if col == 0 {
-				return labelStyle.PaddingLeft(2).PaddingRight(2)
+				return styles.label.PaddingLeft(2).PaddingRight(2)
 			}
-			return valueStyle
+			return styles.value
 		})
-		pass1.Row("Peak Level:", fmt.Sprintf("%.1f ㏈", m.audioProfile.PeakLevel))
-		pass1.Row("RMS Level:", fmt.Sprintf("%.1f ㏈", m.audioProfile.RMSLevel))
-		pass1.Row("Dynamic Range:", fmt.Sprintf("%.1f ㏈", m.audioProfile.DynamicRange))
-		pass1.Row("Optimal Scale:", fmt.Sprintf("%.3f", m.audioProfile.OptimalScale))
-		pass1.Row("Analysis Time:", highlightValueStyle.Render(formatDuration(m.audioProfile.AnalysisTime)))
+		pass1.Row("Peak Level:", fmt.Sprintf("%.1f ㏈", profile.PeakLevel))
+		pass1.Row("RMS Level:", fmt.Sprintf("%.1f ㏈", profile.RMSLevel))
+		pass1.Row("Dynamic Range:", fmt.Sprintf("%.1f ㏈", profile.DynamicRange))
+		pass1.Row("Optimal Scale:", fmt.Sprintf("%.3f", profile.OptimalScale))
+		pass1.Row("Analysis Time:", styles.highlightValueStyle.Render(formatDuration(profile.AnalysisTime)))
 		s.WriteString(pass1.Render())
 		s.WriteString("\n")
 	}
 
 	s.WriteString("\n")
+}
 
-	// Pass 2 Performance Breakdown
-	s.WriteString(headerStyle.Render("Pass 2: Rendering & Encoding"))
+func writeRenderPerformanceSummary(
+	s *strings.Builder,
+	complete RenderComplete,
+	styles completionSummaryStyles,
+	renderBar func(float64) string,
+) {
+	totalMs := complete.TotalTime.Milliseconds()
+	if totalMs == 0 {
+		totalMs = 1
+	}
+
+	s.WriteString(styles.header.Render("Pass 2: Rendering & Encoding"))
 	s.WriteString("\n")
 
-	// Pass 2 table: label, duration, percentage and a rendered summary bar. The
-	// bar is pre-rendered into a cell value (summaryBar.ViewAs renders once at
-	// completion). The table aligns the four columns.
 	pass2 := summaryTable().StyleFunc(func(_, col int) lipgloss.Style {
 		switch col {
 		case 0:
-			return labelStyle.PaddingLeft(2).PaddingRight(2)
+			return styles.label.PaddingLeft(2).PaddingRight(2)
 		case 1, 2:
-			return valueStyle.PaddingRight(2)
+			return styles.value.PaddingRight(2)
 		default:
-			return valueStyle
+			return styles.value
 		}
 	})
 
@@ -99,46 +123,34 @@ func (m *Model) renderComplete() string {
 			label,
 			fmt.Sprintf("~%s", formatDuration(duration)),
 			fmt.Sprintf("(~%d%%)", pct),
-			m.summaryBar.ViewAs(float64(duration.Milliseconds())/float64(totalMs)),
+			renderBar(float64(duration.Milliseconds())/float64(totalMs)),
 		)
 	}
 
-	if m.complete.ThumbnailTime > 0 {
-		barRow("Thumbnail:", m.complete.ThumbnailTime)
+	if complete.ThumbnailTime > 0 {
+		barRow("Thumbnail:", complete.ThumbnailTime)
 	}
 
-	barRow("Visualisation:", m.complete.VisTime)
-	barRow("Video encoding:", m.complete.EncodeTime)
+	barRow("Visualisation:", complete.VisTime)
+	barRow("Video encoding:", complete.EncodeTime)
 
-	if m.complete.AudioTime > 0 {
-		barRow("Audio encoding:", m.complete.AudioTime)
+	if complete.AudioTime > 0 {
+		barRow("Audio encoding:", complete.AudioTime)
 	}
 
-	// Calculate unaccounted time including finalisation (Pass 2 only)
-	// Roll finalisation into runtime/pipeline since it's typically small
-	accountedTime := m.complete.ThumbnailTime + m.complete.VisTime +
-		m.complete.EncodeTime + m.complete.AudioTime
-	otherTime := m.complete.TotalTime - accountedTime
+	accountedTime := complete.ThumbnailTime + complete.VisTime +
+		complete.EncodeTime + complete.AudioTime
+	otherTime := complete.TotalTime - accountedTime
 	if otherTime > 0 {
-		// Label based on encoder type: hardware encoders have GPU pipeline overhead,
-		// software encoder has Go runtime/GC overhead
 		otherLabel := "Runtime:"
-		if m.complete.EncoderIsHW {
+		if complete.EncoderIsHW {
 			otherLabel = "GPU pipeline:"
 		}
 		barRow(otherLabel, otherTime)
 	}
 
-	// Total time gets its own label/value row with the highlight style applied.
-	pass2.Row("Total time:", highlightValueStyle.Render(formatDuration(m.complete.TotalTime)), "", "")
+	pass2.Row("Total time:", styles.highlightValueStyle.Render(formatDuration(complete.TotalTime)), "", "")
 	s.WriteString(pass2.Render())
-
-	return lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(theme.FireOrange).
-		Padding(1, 1).
-		Width(m.boxContentWidth()).
-		Render(s.String()) + "\n"
 }
 
 // summaryTable builds a borderless lipgloss table used for the completion

@@ -1,18 +1,13 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"image"
-	"io"
-	"math"
 	"os"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/alecthomas/kong"
-	"github.com/charmbracelet/harmonica"
 	"github.com/linuxmatters/jive-visualiser/internal/audio"
 	"github.com/linuxmatters/jive-visualiser/internal/cli"
 	"github.com/linuxmatters/jive-visualiser/internal/config"
@@ -93,17 +88,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	validEncoders := map[string]encoder.HWAccelType{
-		"auto":     encoder.HWAccelAuto,
-		"nvenc":    encoder.HWAccelNVENC,
-		"qsv":      encoder.HWAccelQSV,
-		"vaapi":    encoder.HWAccelVAAPI,
-		"vulkan":   encoder.HWAccelVulkan,
-		"software": encoder.HWAccelNone,
-	}
-	hwAccelType, ok := validEncoders[CLI.Encoder]
-	if !ok {
-		cli.PrintError(fmt.Sprintf("invalid --encoder value: %s (must be auto, nvenc, qsv, vaapi, vulkan, or software)", CLI.Encoder))
+	hwAccelType, err := parseEncoderFlag(CLI.Encoder)
+	if err != nil {
+		cli.PrintError(err.Error())
 		os.Exit(1)
 	}
 
@@ -175,6 +162,24 @@ func main() {
 
 	// Generate video using 2-pass streaming approach
 	generateVideo(inputFile, outputFile, channels, noPreview, hwAccelType, runtimeConfig, meta)
+}
+
+func parseEncoderFlag(value string) (encoder.HWAccelType, error) {
+	hwAccelType, ok := encoder.HWAccelTypeForCLIName(value)
+	if !ok {
+		return "", fmt.Errorf("invalid --encoder value: %s (must be %s)", value, formatEncoderNames(encoder.ValidCLIEncoderNames()))
+	}
+	return hwAccelType, nil
+}
+
+func formatEncoderNames(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	if len(names) == 1 {
+		return names[0]
+	}
+	return fmt.Sprintf("%s, or %s", strings.Join(names[:len(names)-1], ", "), names[len(names)-1])
 }
 
 func generateVideo(inputFile string, outputFile string, channels int, noPreview bool, hwAccel encoder.HWAccelType, runtimeConfig *config.RuntimeConfig, meta renderer.PodcastMeta) {
@@ -343,114 +348,35 @@ func audioConvBufLen(samplesPerFrame int) int {
 // failed to load and was dropped) and delivers them on the RenderComplete
 // message so the caller can print them after the Bubbletea alt screen exits.
 func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
-	var warnings []string
-	// fail delivers a fatal Pass 2 error on the RenderComplete message so the
-	// caller can print it (and exit non-zero) after the alt screen closes.
-	fail := func(err error) {
-		p.Send(ui.RenderComplete{Err: err, AssetWarnings: warnings})
-	}
-	reader, err := audio.NewStreamingReader(cfg.inputFile)
-	if err != nil {
-		fail(fmt.Errorf("opening audio stream: %w", err))
+	runner := newPass2Runner(p, profile, cfg)
+
+	if err := runner.setupReader(); err != nil {
+		runner.fail(err)
 		return
 	}
-	defer reader.Close()
+	defer runner.reader.Close()
 
-	enc, err := encoder.New(encoder.Config{
-		OutputPath:    cfg.outputFile,
-		Width:         config.Width,
-		Height:        config.Height,
-		Framerate:     config.FPS,
-		SampleRate:    reader.SampleRate(),
-		AudioChannels: cfg.channels,
-		HWAccel:       cfg.hwAccel,
-	})
-	if err != nil {
-		fail(fmt.Errorf("creating encoder: %w", err))
+	if err := runner.setupEncoder(); err != nil {
+		runner.fail(err)
 		return
 	}
 
-	if err = enc.Initialize(); err != nil {
-		fail(fmt.Errorf("initialising encoder: %w", err))
+	defer runner.enc.Close()
+
+	// Asset load failures are non-fatal: nil assets degrade gracefully, but warn
+	// so dropped assets are not silent.
+	runner.loadAssets()
+
+	if err := runner.setupProcessorAndFrame(); err != nil {
+		runner.fail(err)
 		return
 	}
+	defer runner.processor.Close()
 
-	defer enc.Close()
-
-	// Load background image (custom or embedded). A load failure is non-fatal:
-	// the renderer tolerates a nil background, but warn so the dropped asset is
-	// not silent (a malformed --background-image otherwise vanishes without a
-	// trace).
-	bgImage, err := renderer.LoadBackgroundImage(cfg.runtimeConfig)
-	if err != nil {
-		bgImage = nil
-		if _, isCustom := cfg.runtimeConfig.GetBackgroundImagePath(); isCustom {
-			warnings = append(warnings, fmt.Sprintf("could not load background image, rendering without it: %v", err))
-		} else {
-			warnings = append(warnings, fmt.Sprintf("could not load embedded default background, rendering without it: %v", err))
-		}
-	}
-
-	// Load font for centre text (embedded). A nil face degrades gracefully, but
-	// a failed load of the embedded font signals an internal problem worth
-	// surfacing.
-	fontFace, err := renderer.LoadFont(48)
-	if err != nil {
-		fontFace = nil
-		warnings = append(warnings, fmt.Sprintf("could not load embedded font, rendering without centre text: %v", err))
-	}
-
-	processor, err := audio.NewProcessor()
-	if err != nil {
-		fail(fmt.Errorf("creating FFT processor: %w", err))
-		return
-	}
-	defer processor.Close()
-	frame := renderer.NewFrame(bgImage, fontFace, cfg.meta, cfg.runtimeConfig)
-
-	numFrames := profile.NumFrames
-
-	var totalVis, totalEncode, totalAudio time.Duration
-	renderStartTime := time.Now()
-	lastProgressUpdate := renderStartTime
+	runner.setupTimingAndDisplay()
 	const progressUpdateInterval = 30 * time.Millisecond
 
-	// Codec display uses the output channel count (from CLI), not the input's.
-	audioSampleRate := reader.SampleRate()
-	audioChannelStr := "mono"
-	if cfg.channels == 2 {
-		audioChannelStr = "stereo"
-	}
-	audioCodecInfo := fmt.Sprintf("AAC %.1f㎑ %s", float64(audioSampleRate)/1000.0, audioChannelStr)
-
-	// Harmonica spring peak-hold state. Each bar rises INSTANTLY to a new high,
-	// then springs DOWN toward the raw level over subsequent frames. The spring
-	// delta is locked to the video frame interval (1/FPS) so the fall rate is
-	// framerate-independent.
-	prevBarHeights := make([]float64, config.NumBars)
-	const (
-		harmonicaSpringFreq    = 6.0
-		harmonicaSpringDamping = 1.0
-		// harmonicaGain lifts the spring bars to a fuller amplitude. The peak-hold
-		// path has no integrator, so bars otherwise peak at the raw scaled height
-		// and look short (the old leaky-integrator path had a steady-state gain of
-		// roughly 4.3x for free). The existing soft-knee compression caps the loud
-		// bars, so this keeps dynamic spread rather than flattening everything to
-		// full height. Tune for taste.
-		harmonicaGain = 2.0
-	)
-	harmonicaDelta := 1.0 / config.Framerate
-	harmonicaSprings := make([]harmonica.Spring, config.NumBars)
-	for i := range harmonicaSprings {
-		harmonicaSprings[i] = harmonica.NewSpring(harmonicaDelta, harmonicaSpringFreq, harmonicaSpringDamping)
-	}
-	harmonicaPos := make([]float64, config.NumBars)
-	harmonicaVel := make([]float64, config.NumBars)
-
-	// Reusable buffers to avoid per-frame allocations in the render loop.
-	barHeights := make([]float64, config.NumBars)
-	rearrangedHeights := make([]float64, config.NumBars)
-	barHeightsCopy := make([]float64, config.NumBars) // For UI updates
+	runner.setupRenderState()
 
 	// Double-buffered private RGBA images for the preview. The render loop reuses
 	// the frame's internal image every iteration, so the UI goroutine must read a
@@ -460,45 +386,15 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	// between two buffers so the producer always fills the one the UI is not
 	// reading. Allocated once here, only when preview is enabled, to keep it off
 	// the hot path.
-	var previewImgs [2]*image.RGBA
-	previewIdx := 0
-	if !cfg.noPreview {
-		previewImgs[0] = image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
-		previewImgs[1] = image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
-	}
-
-	sensitivity := 1.0
+	runner.setupPreviewBuffers()
 
 	// Sliding buffer for FFT: we read samplesPerFrame but need FFTSize for FFT.
 	// Derive from the file's actual sample rate so encoded audio and video
 	// durations stay aligned for any input rate.
-	samplesPerFrame := reader.SampleRate() / config.FPS
-	fftBuffer := make([]float64, config.FFTSize)
-
-	// Pre-allocate reusable buffers for audio processing (avoid per-frame
-	// allocations). See audioConvBufLen for the sizing rationale.
-	convBufLen := audioConvBufLen(samplesPerFrame)
-	newSamples := make([]float64, samplesPerFrame)
-	audioSamples := make([]float32, convBufLen)
 	// The reader downmixes to mono. For stereo output the encoder expects
 	// interleaved L,R pairs, so duplicate each mono sample into both channels via
 	// this pre-allocated buffer (no per-frame allocation).
-	stereo := cfg.channels == 2
-	var stereoSamples []float32
-	if stereo {
-		stereoSamples = make([]float32, convBufLen*2)
-	}
-
-	// Pre-fill buffer with first chunk
-	n, err := audio.FillFFTBuffer(reader, fftBuffer)
-	if err != nil {
-		fail(fmt.Errorf("reading initial audio chunk: %w", err))
-		return
-	}
-	if n == 0 {
-		fail(errors.New("no audio data available"))
-		return
-	}
+	runner.setupAudioBuffers()
 
 	// Write the whole prefill to the encoder. FillFFTBuffer consumed n samples
 	// from the reader, so all n must reach the encoder or that audio is lost
@@ -506,205 +402,46 @@ func runPass2(p *tea.Program, profile *audio.Profile, cfg pass2Config) {
 	// the encoder absorbs the surplus beyond frame 0. Reuse the conversion
 	// buffers: WriteAudioSamples copies into the FIFO and retains no reference,
 	// and the buffers are overwritten before each later use in the render loop.
-	if err := convertAndWriteAudio(enc.WriteAudioSamples, fftBuffer, n, stereo, audioSamples, stereoSamples); err != nil {
-		fail(fmt.Errorf("writing initial audio: %w", err))
+	if err := runner.prefillFFT(); err != nil {
+		runner.fail(err)
 		return
 	}
 
 	// Process frames until we run out of audio
 	frameNum := 0
-	for frameNum < numFrames {
-		// Use current buffer for FFT
-		chunk := fftBuffer[:config.FFTSize]
-
-		// === VISUALISATION TIMING START ===
-		t0 := time.Now()
-
-		coeffs := processor.ProcessChunk(chunk)
-
-		// Bin magnitudes into bars using the optimal baseScale from Pass 1.
-		audio.BinFFT(coeffs, sensitivity, profile.OptimalBaseScale, barHeights)
-
-		// Auto-sensitivity: detect overshoot, applying soft-knee compression to any
-		// bar above the threshold.
-		overshootDetected := false
-
-		for i, h := range barHeights {
-			if h > config.OvershootThreshold {
-				overshootDetected = true
-				overshoot := h - config.OvershootThreshold
-				barHeights[i] = config.OvershootThreshold + overshoot*math.Exp(-overshoot/config.OvershootThreshold)
-			}
-		}
-
-		if overshootDetected {
-			sensitivity *= config.SensitivityDecay
-		} else {
-			sensitivity *= config.SensitivityGrowth
-		}
-
-		if sensitivity < config.SensitivityMin {
-			sensitivity = config.SensitivityMin
-		}
-		if sensitivity > config.SensitivityMax {
-			sensitivity = config.SensitivityMax
-		}
-
-		// Scale normalised bar heights into pixel space.
-		actualAvailableSpace := float64(config.Height/2 - config.CenterGap/2)
-		availableHeight := actualAvailableSpace * config.MaxBarHeight
-		for i := range barHeights {
-			barHeights[i] *= availableHeight
-		}
-
-		// Harmonica peak-hold dynamic. Each bar rises instantly to a new peak, then
-		// springs down toward the raw level. Writes into prevBarHeights so the
-		// downstream rearrange/draw pipeline stays unchanged.
-		for i := range barHeights {
-			// Apply the spring-path gain so bars reach a fuller amplitude; the
-			// soft-knee below caps the loud ones, preserving dynamic spread.
-			currentHeight := barHeights[i] * harmonicaGain
-
-			if currentHeight >= harmonicaPos[i] {
-				// Instant rise to the new peak; reset velocity so the fall starts
-				// from rest.
-				harmonicaPos[i] = currentHeight
-				harmonicaVel[i] = 0
-			} else {
-				harmonicaPos[i], harmonicaVel[i] = harmonicaSprings[i].Update(
-					harmonicaPos[i], harmonicaVel[i], currentHeight)
-				if harmonicaPos[i] < 0 {
-					harmonicaPos[i] = 0
-					harmonicaVel[i] = 0
-				}
-			}
-
-			heldHeight := harmonicaPos[i]
-
-			// Soft knee compression
-			if heldHeight > availableHeight {
-				overshoot := heldHeight - availableHeight
-				heldHeight = availableHeight + overshoot*math.Exp(-overshoot/availableHeight)
-			}
-
-			prevBarHeights[i] = heldHeight
-		}
-
-		audio.RearrangeFrequenciesCenterOut(prevBarHeights, rearrangedHeights)
-
-		frame.Draw(rearrangedHeights)
-		totalVis += time.Since(t0)
-		// === VISUALISATION TIMING END ===
-
-		// === VIDEO ENCODING TIMING START ===
-		t0 = time.Now()
-		img := frame.GetImage()
-		if err := enc.WriteFrameRGBA(img.Pix); err != nil {
-			fail(fmt.Errorf("encoding frame %d: %w", frameNum, err))
+	for frameNum < runner.numFrames {
+		img := runner.renderFrame()
+		if err := runner.writeVideoFrame(frameNum, img); err != nil {
+			runner.fail(err)
 			return
 		}
-		totalEncode += time.Since(t0)
-		// === VIDEO ENCODING TIMING END ===
 
-		// Throttled UI updates, outside the timed sections.
-		if time.Since(lastProgressUpdate) >= progressUpdateInterval {
-			lastProgressUpdate = time.Now()
-			elapsed := time.Since(renderStartTime)
-
-			copy(barHeightsCopy, rearrangedHeights)
-
-			// Actual on-disk file size, not an estimate.
-			var currentFileSize int64
-			if fileInfo, err := os.Stat(cfg.outputFile); err == nil {
-				currentFileSize = fileInfo.Size()
-			}
-
-			var frameData *image.RGBA
-			if !cfg.noPreview {
-				// Copy into the buffer the UI is not reading; the next frame.Draw
-				// mutates img and the next send reuses the other buffer.
-				previewImg := previewImgs[previewIdx]
-				copy(previewImg.Pix, img.Pix)
-				frameData = previewImg
-				previewIdx ^= 1
-			}
-
-			p.Send(ui.RenderProgress{
-				Frame:       frameNum + 1,
-				TotalFrames: numFrames,
-				Elapsed:     elapsed,
-				BarHeights:  barHeightsCopy,
-				FileSize:    currentFileSize,
-				Sensitivity: sensitivity,
-				FrameData:   frameData,
-				VideoCodec:  fmt.Sprintf("H.264 %d×%d", config.Width, config.Height),
-				AudioCodec:  audioCodecInfo,
-				EncoderName: enc.EncoderName(),
-			})
-		}
+		runner.sendProgressIfDue(frameNum, img, progressUpdateInterval)
 
 		frameNum++
 
-		// === AUDIO TIMING START ===
-		// Read audio, encode, and shift the FFT buffer ready for the next frame.
-		t0 = time.Now()
-		nRead, readErr := audio.ReadNextFrame(reader, newSamples)
-		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				totalAudio += time.Since(t0)
-				break
-			}
-			fail(fmt.Errorf("reading audio: %w", readErr))
+		hasAudio, err := runner.processNextAudioFrame(frameNum)
+		if err != nil {
+			runner.fail(err)
 			return
 		}
-
-		// Convert this frame's float64 samples to float32 for the AAC encoder via
-		// the pre-allocated buffers, sliced to the actual length. For stereo the
-		// mono signal is duplicated into both interleaved channels.
-		if writeErr := convertAndWriteAudio(enc.WriteAudioSamples, newSamples, nRead, stereo, audioSamples, stereoSamples); writeErr != nil {
-			fail(fmt.Errorf("writing audio at frame %d: %w", frameNum, writeErr))
-			return
+		if !hasAudio {
+			break
 		}
-		audio.SlideFFTWindow(fftBuffer, newSamples, nRead)
-		totalAudio += time.Since(t0)
-		// === AUDIO TIMING END ===
 	}
 
 	// Flush samples still in the FIFO after the last video frame is written.
-	if err := enc.FlushAudioEncoder(); err != nil {
-		fail(fmt.Errorf("flushing audio: %w", err))
+	if err := runner.enc.FlushAudioEncoder(); err != nil {
+		runner.fail(fmt.Errorf("flushing audio: %w", err))
 		return
 	}
 
 	// A Close failure is fatal: the trailer never lands and the file is
 	// truncated.
-	if err := enc.Close(); err != nil {
-		fail(fmt.Errorf("closing encoder: %w", err))
+	if err := runner.closeEncoder(); err != nil {
+		runner.fail(err)
 		return
 	}
 
-	fileInfo, err := os.Stat(cfg.outputFile)
-	var actualFileSize int64
-	if err == nil {
-		actualFileSize = fileInfo.Size()
-	}
-
-	samplesProcessed := int64(profile.SampleRate) * int64(profile.Duration)
-
-	overallTotalTime := time.Since(cfg.overallStartTime)
-
-	p.Send(ui.RenderComplete{
-		OutputFile:       cfg.outputFile,
-		FileSize:         actualFileSize,
-		TotalFrames:      numFrames,
-		VisTime:          totalVis,
-		EncodeTime:       totalEncode,
-		AudioTime:        totalAudio,
-		TotalTime:        overallTotalTime,
-		ThumbnailTime:    cfg.thumbnailDuration,
-		SamplesProcessed: samplesProcessed,
-		EncoderName:      enc.EncoderName(),
-		EncoderIsHW:      enc.IsHardware(),
-		AssetWarnings:    warnings,
-	})
+	runner.sendComplete()
 }
