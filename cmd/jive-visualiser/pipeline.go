@@ -39,9 +39,13 @@ func generateVideo(cfg *runConfig) {
 		os.Exit(1)
 	}
 
-	if err := printFinalModel(finalModel); err != nil {
+	interrupted, err := printFinalModel(finalModel)
+	if err != nil {
 		cli.PrintError(err.Error())
 		os.Exit(1)
+	}
+	if interrupted {
+		return
 	}
 
 	if analysisErr := <-analysisErrCh; analysisErr != nil {
@@ -132,7 +136,7 @@ func runAnalysisAndPass2(p *tea.Program, cfg *runConfig, estimatedTotalFrames in
 	return nil
 }
 
-func printFinalModel(finalModel tea.Model) error {
+func printFinalModel(finalModel tea.Model) (bool, error) {
 	// Surface results from the final model now the alt screen is gone. The
 	// warnings travelled on the RenderComplete message, so reading them here is
 	// synchronised by p.Run() returning.
@@ -141,13 +145,14 @@ func printFinalModel(finalModel tea.Model) error {
 			cli.PrintWarning(w)
 		}
 		if renderErr := m.RenderError(); renderErr != nil {
-			return renderErr
+			return false, renderErr
 		}
 		if summary := m.CompletionSummary(); summary != "" {
 			fmt.Println(summary)
 		}
+		return m.Interrupted(), nil
 	}
-	return nil
+	return false, nil
 }
 
 func thumbnailOutputPath(outputFile string) string {

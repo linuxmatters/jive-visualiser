@@ -563,7 +563,23 @@ func TestUpdateKeyPressQuits(t *testing.T) {
 			if _, ok := assertCmdMsg(t, cmd).(tea.QuitMsg); !ok {
 				t.Errorf("key %q did not yield tea.QuitMsg", tc.key.String())
 			}
+			if !m.Interrupted() {
+				t.Errorf("key %q did not mark model interrupted", tc.key.String())
+			}
 		})
+	}
+}
+
+func TestUpdateKeyPressAfterCompleteDoesNotInterrupt(t *testing.T) {
+	m := NewModel(true)
+	m.complete = &RenderComplete{}
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if _, ok := assertCmdMsg(t, cmd).(tea.QuitMsg); !ok {
+		t.Fatal("completed view key did not yield tea.QuitMsg")
+	}
+	if m.Interrupted() {
+		t.Fatal("completed view key marked model interrupted")
 	}
 }
 
