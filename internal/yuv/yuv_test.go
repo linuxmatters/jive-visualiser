@@ -2,6 +2,8 @@ package yuv
 
 import (
 	"image/color"
+	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -22,6 +24,99 @@ func diffWithin(a, b uint8) bool {
 		d = -d
 	}
 	return d <= tolerance
+}
+
+func addRangeCounts(t *testing.T, height int, counts []int, startY, endY int) {
+	t.Helper()
+
+	if startY < 0 || endY < startY || endY > height {
+		t.Errorf("range %d:%d outside height %d", startY, endY, height)
+		return
+	}
+	for y := startY; y < endY; y++ {
+		counts[y]++
+	}
+}
+
+func assertRowsCoveredOnce(t *testing.T, name string, counts []int) {
+	t.Helper()
+
+	for row, count := range counts {
+		if count != 1 {
+			t.Errorf("%s row %d processed %d times, want 1", name, row, count)
+		}
+	}
+}
+
+func rowCoverageHeights() []struct {
+	name   string
+	height int
+} {
+	numCPU := runtime.NumCPU()
+	smallHeight := 1
+	if numCPU > 1 {
+		smallHeight = numCPU - 1
+	}
+
+	return []struct {
+		name   string
+		height int
+	}{
+		{"small", smallHeight},
+		{"equal-to-CPU", numCPU},
+		{"larger", numCPU*2 + 3},
+	}
+}
+
+func TestParallelRows_partitionRowsCoverEveryRowOnce(t *testing.T) {
+	for _, tc := range rowCoverageHeights() {
+		t.Run(tc.name, func(t *testing.T) {
+			counts := make([]int, tc.height)
+			for _, r := range partitionRows(tc.height) {
+				addRangeCounts(t, tc.height, counts, r.startY, r.endY)
+			}
+			assertRowsCoveredOnce(t, tc.name, counts)
+		})
+	}
+}
+
+func TestParallelRowsProcessesEveryRowOnce(t *testing.T) {
+	for _, tc := range rowCoverageHeights() {
+		t.Run(tc.name, func(t *testing.T) {
+			counts := make([]int, tc.height)
+			var mu sync.Mutex
+
+			ParallelRows(tc.height, func(startY, endY int) {
+				mu.Lock()
+				defer mu.Unlock()
+
+				addRangeCounts(t, tc.height, counts, startY, endY)
+			})
+
+			assertRowsCoveredOnce(t, tc.name, counts)
+		})
+	}
+}
+
+func TestRowPoolRunProcessesEveryRowOnce(t *testing.T) {
+	for _, tc := range rowCoverageHeights() {
+		t.Run(tc.name, func(t *testing.T) {
+			pool := NewRowPool(tc.height)
+			defer pool.Close()
+
+			counts := make([]int, tc.height)
+			var mu sync.Mutex
+
+			pool.Run(func(startY, endY int) {
+				mu.Lock()
+				defer mu.Unlock()
+
+				addRangeCounts(t, tc.height, counts, startY, endY)
+			})
+
+			assertRowsCoveredOnce(t, tc.name, counts)
+		})
+	}
 }
 
 func TestRGBToYCbCr_AgainstStdlib(t *testing.T) {

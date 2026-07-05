@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"image"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -51,6 +53,81 @@ func TestParseEncoderFlagInvalidError(t *testing.T) {
 	}
 
 	want := "invalid --encoder value: bogus (must be auto, nvenc, qsv, vaapi, vulkan, or software)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+}
+
+func TestThumbnailOutputPathUsesExtension(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "episode.final.mp4")
+	want := filepath.Join(filepath.Dir(output), "episode.final.png")
+
+	if got := thumbnailOutputPath(output); got != want {
+		t.Fatalf("thumbnailOutputPath(%q) = %q, want %q", output, got, want)
+	}
+}
+
+func TestThumbnailOutputPathHandlesNoExtension(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "episode")
+	want := output + ".png"
+
+	if got := thumbnailOutputPath(output); got != want {
+		t.Fatalf("thumbnailOutputPath(%q) = %q, want %q", output, got, want)
+	}
+}
+
+func TestStatErrorsAreReportedForCLIPaths(t *testing.T) {
+	stat := func(path string) (os.FileInfo, error) {
+		return nil, &os.PathError{Op: "stat", Path: path, Err: os.ErrPermission}
+	}
+
+	tests := []struct {
+		label string
+		path  string
+		want  string
+	}{
+		{
+			label: "input file",
+			path:  "input.wav",
+			want:  "checking input file \"input.wav\": stat input.wav: permission denied",
+		},
+		{
+			label: "background image",
+			path:  "background.png",
+			want:  "checking background image \"background.png\": stat background.png: permission denied",
+		},
+		{
+			label: "thumbnail image",
+			path:  "thumbnail.png",
+			want:  "checking thumbnail image \"thumbnail.png\": stat thumbnail.png: permission denied",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.label, func(t *testing.T) {
+			err := validateExistingPath(tc.label, tc.path, stat)
+			if err == nil {
+				t.Fatal("expected stat error")
+			}
+			if !errors.Is(err, os.ErrPermission) {
+				t.Fatalf("error = %v, want permission error", err)
+			}
+			if err.Error() != tc.want {
+				t.Fatalf("error = %q, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestStatMissingPathKeepsSpecificError(t *testing.T) {
+	err := validateExistingPath("input file", "missing.wav", func(string) (os.FileInfo, error) {
+		return nil, os.ErrNotExist
+	})
+	if err == nil {
+		t.Fatal("expected missing path error")
+	}
+
+	want := "input file does not exist: missing.wav"
 	if err.Error() != want {
 		t.Fatalf("error = %q, want %q", err, want)
 	}

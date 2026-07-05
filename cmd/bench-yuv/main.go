@@ -86,7 +86,35 @@ func convertRGBAToYUVGo(pool *yuv.RowPool, rgbaData []byte, yuvFrame *ffmpeg.AVF
 	})
 }
 
-func convertSwscale(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, swsCtx *ffmpeg.SwsContext, srcFrame *ffmpeg.AVFrame, width, height int) {
+func checkFFmpeg(ret int, err error, op string) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	if ret < 0 {
+		return fmt.Errorf("%s: %w", op, ffmpeg.WrapErr(ret))
+	}
+	return nil
+}
+
+func allocateFrame(name string, pixFmt ffmpeg.AVPixelFormat, width, height int) (*ffmpeg.AVFrame, error) {
+	frame := ffmpeg.AVFrameAlloc()
+	if frame == nil {
+		return nil, fmt.Errorf("%s frame allocation failed", name)
+	}
+	frame.SetWidth(width)
+	frame.SetHeight(height)
+	frame.SetFormat(int(pixFmt))
+
+	ret, err := ffmpeg.AVFrameGetBuffer(frame, 0)
+	if err := checkFFmpeg(ret, err, name+" frame buffer allocation"); err != nil {
+		ffmpeg.AVFrameFree(&frame)
+		return nil, err
+	}
+
+	return frame, nil
+}
+
+func convertSwscale(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, swsCtx *ffmpeg.SwsContext, srcFrame *ffmpeg.AVFrame, width, height int) error {
 	// Copy RGBA data into source frame
 	srcLinesize := srcFrame.Linesize().Get(0)
 	srcData := srcFrame.Data().Get(0)
@@ -99,17 +127,24 @@ func convertSwscale(rgbaData []byte, yuvFrame *ffmpeg.AVFrame, swsCtx *ffmpeg.Sw
 		}
 	}
 
-	_, _ = ffmpeg.SwsScaleFrame(swsCtx, yuvFrame, srcFrame)
+	ret, err := ffmpeg.SwsScaleFrame(swsCtx, yuvFrame, srcFrame)
+	return checkFFmpeg(ret, err, "SwsScaleFrame")
 }
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "bench-yuv: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	iterations := flag.Int("iterations", 1000, "number of conversions to perform")
 	impl := flag.String("impl", "go", "implementation: go or swscale")
 	flag.Parse()
 
 	if *impl != "go" && *impl != "swscale" {
-		fmt.Fprintf(os.Stderr, "Unknown implementation: %s (use 'go' or 'swscale')\n", *impl)
-		os.Exit(1)
+		return fmt.Errorf("unknown implementation: %s (use 'go' or 'swscale')", *impl)
 	}
 
 	rgbaSize := width * height * 4
@@ -121,11 +156,10 @@ func main() {
 		rgbaData[i+3] = 255            // A
 	}
 
-	yuvFrame := ffmpeg.AVFrameAlloc()
-	yuvFrame.SetWidth(width)
-	yuvFrame.SetHeight(height)
-	yuvFrame.SetFormat(int(ffmpeg.AVPixFmtYuv420P))
-	_, _ = ffmpeg.AVFrameGetBuffer(yuvFrame, 0)
+	yuvFrame, err := allocateFrame("YUV output", ffmpeg.AVPixFmtYuv420P, width, height)
+	if err != nil {
+		return err
+	}
 	defer ffmpeg.AVFrameFree(&yuvFrame)
 
 	switch *impl {
@@ -138,6 +172,9 @@ func main() {
 		}
 	case "swscale":
 		swsCtx := ffmpeg.SwsAllocContext()
+		if swsCtx == nil {
+			return fmt.Errorf("swscale context allocation failed")
+		}
 		swsCtx.SetSrcW(width)
 		swsCtx.SetSrcH(height)
 		swsCtx.SetSrcFormat(int(ffmpeg.AVPixFmtRgba))
@@ -145,18 +182,25 @@ func main() {
 		swsCtx.SetDstH(height)
 		swsCtx.SetDstFormat(int(ffmpeg.AVPixFmtYuv420P))
 		swsCtx.SetFlags(uint(ffmpeg.SwsBilinear))
-		_, _ = ffmpeg.SwsInitContext(swsCtx, nil, nil)
+		ret, err := ffmpeg.SwsInitContext(swsCtx, nil, nil)
+		if err := checkFFmpeg(ret, err, "swscale context initialisation"); err != nil {
+			ffmpeg.SwsFreecontext(swsCtx)
+			return err
+		}
 		defer ffmpeg.SwsFreecontext(swsCtx)
 
-		srcFrame := ffmpeg.AVFrameAlloc()
-		srcFrame.SetWidth(width)
-		srcFrame.SetHeight(height)
-		srcFrame.SetFormat(int(ffmpeg.AVPixFmtRgba))
-		_, _ = ffmpeg.AVFrameGetBuffer(srcFrame, 0)
+		srcFrame, err := allocateFrame("RGBA source", ffmpeg.AVPixFmtRgba, width, height)
+		if err != nil {
+			return err
+		}
 		defer ffmpeg.AVFrameFree(&srcFrame)
 
 		for i := 0; i < *iterations; i++ {
-			convertSwscale(rgbaData, yuvFrame, swsCtx, srcFrame, width, height)
+			if err := convertSwscale(rgbaData, yuvFrame, swsCtx, srcFrame, width, height); err != nil {
+				return err
+			}
 		}
 	}
+
+	return nil
 }
