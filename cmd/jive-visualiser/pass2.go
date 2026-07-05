@@ -229,7 +229,7 @@ func (r *pass2Runner) setupRenderState() {
 		harmonicaSpringFreq    = 6.0
 		harmonicaSpringDamping = 1.0
 	)
-	harmonicaDelta := 1.0 / config.Framerate
+	harmonicaDelta := 1.0 / float64(config.FPS)
 	r.harmonicaSprings = make([]harmonica.Spring, config.NumBars)
 	for i := range r.harmonicaSprings {
 		r.harmonicaSprings[i] = harmonica.NewSpring(harmonicaDelta, harmonicaSpringFreq, harmonicaSpringDamping)

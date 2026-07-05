@@ -19,6 +19,7 @@ type videoEncoder struct {
 	hwFramesCtx *ffmpeg.AVBufferRef
 
 	hwNV12Frame *ffmpeg.AVFrame
+	hwFrame     *ffmpeg.AVFrame
 	swYUVFrame  *ffmpeg.AVFrame
 	rgbaFrame   *ffmpeg.AVFrame
 
@@ -295,6 +296,13 @@ func (v *videoEncoder) setupHWFramesContext(hwPixFmt ffmpeg.AVPixelFormat) error
 		return err
 	}
 
+	// Reused across frames: each write unrefs it and checks out a fresh GPU
+	// buffer via AVHWFrameGetBuffer, avoiding a per-frame Go-side alloc/free.
+	v.hwFrame = ffmpeg.AVFrameAlloc()
+	if v.hwFrame == nil {
+		return fmt.Errorf("failed to allocate reusable hardware frame")
+	}
+
 	return nil
 }
 
@@ -477,11 +485,9 @@ func (v *videoEncoder) writeFrameHWUpload(
 
 	convertRGBAToNV12(v.rowPool, rgbaData, nv12Frame, width)
 
-	hwFrame := ffmpeg.AVFrameAlloc()
-	if hwFrame == nil {
-		return fmt.Errorf("failed to allocate hardware frame")
-	}
-	defer ffmpeg.AVFrameFree(&hwFrame)
+	// Release the previous frame's GPU buffer before checking out a fresh one.
+	hwFrame := v.hwFrame
+	ffmpeg.AVFrameUnref(hwFrame)
 
 	ret, err := ffmpeg.AVHWFrameGetBuffer(v.hwFramesCtx, hwFrame, 0)
 	if err := checkFFmpeg(ret, err, "get hardware frame buffer"); err != nil {
@@ -554,6 +560,10 @@ func (v *videoEncoder) close() {
 	if v.hwNV12Frame != nil {
 		ffmpeg.AVFrameFree(&v.hwNV12Frame)
 		v.hwNV12Frame = nil
+	}
+	if v.hwFrame != nil {
+		ffmpeg.AVFrameFree(&v.hwFrame)
+		v.hwFrame = nil
 	}
 	if v.swYUVFrame != nil {
 		ffmpeg.AVFrameFree(&v.swYUVFrame)

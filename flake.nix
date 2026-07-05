@@ -31,6 +31,10 @@
               gcc
               go_1_26
               gocyclo
+              # golangci-lint follows the nixpkgs pin in flake.lock (currently
+              # 2.12.2). Keep this in step with the version: pin on
+              # golangci/golangci-lint-action in .github/workflows/builder.yml so
+              # local and CI lint results agree.
               golangci-lint
               ineffassign
               just

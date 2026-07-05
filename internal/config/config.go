@@ -30,8 +30,6 @@ const (
 )
 
 const (
-	Framerate = float64(FPS)
-
 	SensitivityDecay   = 0.985 // Multiplier when overshoot detected (1.5% reduction per frame)
 	SensitivityGrowth  = 1.002 // Multiplier when no overshoot (0.2% increase per frame)
 	SensitivityMin     = 0.05

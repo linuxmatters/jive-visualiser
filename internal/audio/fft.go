@@ -23,6 +23,13 @@ type avComplexFloat struct {
 // a reused buffer; callers must consume it before the next ProcessChunk call.
 type Spectrum []float32
 
+// Compile-time assertion that the positive-frequency bin count (FFTSize/2)
+// divides evenly by NumBars. binRawMagnitudes assumes every bar covers exactly
+// binsPerBar bins; if the division ever truncated it would silently drop the
+// spectrum tail. This declares an array whose length is negative when the
+// remainder is non-zero, which fails to compile.
+var _ [0 - (config.FFTSize/2)%config.NumBars]struct{}
+
 // binRawMagnitudes bins FFT coefficients into per-bar raw average magnitudes.
 // It writes config.NumBars values into result. The spectrum runs up to the
 // Nyquist frequency (~22kHz at 44.1kHz) to capture cymbals, hi-hats, and the

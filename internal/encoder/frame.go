@@ -10,6 +10,13 @@ import (
 	"github.com/linuxmatters/jive-visualiser/internal/yuv"
 )
 
+// ConvertRGBAToYUV converts RGBA data directly to YUV420P (planar) format. It is
+// a thin exported wrapper over the production hot path so the bench-yuv harness
+// can measure the real converter rather than a drifting copy.
+func ConvertRGBAToYUV(pool *yuv.RowPool, rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width int) {
+	convertRGBAToYUV(pool, rgbaData, yuvFrame, width)
+}
+
 // convertRGBAToYUV converts RGBA data directly to YUV420P (planar) format,
 // skipping the intermediate RGB24 buffer allocation for faster software encoding.
 // This near-duplicates convertRGBAToNV12 on purpose: the two hot paths stay

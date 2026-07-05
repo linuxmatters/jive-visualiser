@@ -335,6 +335,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RenderProgress:
 		m.renderState = msg
 		m.recordSpeedSample(msg)
+		m.updatePreviewCache(msg)
 		// Drive the bar's spring toward the new target. The producer owns the
 		// target percent; the bar's own FrameMsg loop animates the fill.
 		if msg.TotalFrames > 0 {
@@ -642,13 +643,7 @@ func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 
 	s.WriteString(renderLiveSpectrumBlock(m.spectrum.positions, m.spectrumWidth()))
 
-	var preview string
-	preview, m.cachedPreview, m.cachedFrameNum = renderLivePreviewBlock(
-		m.noPreview,
-		m.renderState,
-		m.cachedPreview,
-		m.cachedFrameNum,
-	)
+	preview := renderLivePreviewBlock(m.noPreview, m.cachedPreview)
 	if preview != "" {
 		s.WriteString("\n")
 		s.WriteString(preview)
@@ -717,20 +712,27 @@ func renderLiveSpectrumBlock(positions []float64, width int) string {
 	return renderSpectrum(positions, width)
 }
 
-func renderLivePreviewBlock(
-	noPreview bool,
-	state RenderProgress,
-	cachedPreview string,
-	cachedFrameNum int,
-) (string, string, int) {
+// updatePreviewCache stores the latest preview frame on the model so View can
+// read it without side-effects. It runs in Update when a RenderProgress arrives,
+// keeping the last non-empty preview when a message carries none so the block
+// never blanks between frames.
+func (m *Model) updatePreviewCache(state RenderProgress) {
+	if m.noPreview {
+		return
+	}
+	if state.Preview != "" && state.PreviewFrame != m.cachedFrameNum {
+		m.cachedPreview = state.Preview
+		m.cachedFrameNum = state.PreviewFrame
+	}
+}
+
+// renderLivePreviewBlock returns the preview to display from the model's cached
+// frame. It is pure: the cache is populated in Update via updatePreviewCache.
+func renderLivePreviewBlock(noPreview bool, cachedPreview string) string {
 	if noPreview {
-		return "", cachedPreview, cachedFrameNum
+		return ""
 	}
-	if state.Preview != "" && state.PreviewFrame != cachedFrameNum {
-		cachedPreview = state.Preview
-		cachedFrameNum = state.PreviewFrame
-	}
-	return cachedPreview, cachedPreview, cachedFrameNum
+	return cachedPreview
 }
 
 // renderLiveFrameSourceLine renders the "<spinner> Frame X / Y … video · audio"

@@ -15,7 +15,9 @@ type FrameAnalysis struct {
 	// Peak FFT magnitude across all bars
 	PeakMagnitude float64
 
-	// RMS level of audio chunk
+	// RMS level over the overlapping FFT window (config.FFTSize samples), not the
+	// per-frame audio; consecutive frames overlap because the window is wider than
+	// one frame's worth of samples.
 	RMSLevel float64
 }
 
@@ -148,18 +150,19 @@ func AnalyzeAudio(filename string, progressCb ProgressCallback) (*Profile, error
 	return profile, nil
 }
 
-// analyzeFrame extracts statistics from FFT coefficients and audio chunk.
+// analyzeFrame extracts statistics from FFT coefficients and the FFT window.
 // barMagnitudes is an optional buffer that receives per-bar average magnitudes
 // for progress display; pass nil when bar magnitudes are not needed.
-func analyzeFrame(spectrum Spectrum, audioChunk []float64, barMagnitudes []float64) FrameAnalysis {
+func analyzeFrame(spectrum Spectrum, fftWindow []float64, barMagnitudes []float64) FrameAnalysis {
 	analysis := FrameAnalysis{}
 
-	// Calculate RMS of audio chunk
+	// RMS over the FFT window. This is the overlapping analysis window, not the
+	// per-frame audio, so consecutive frames share samples.
 	var sumSquares float64
-	for _, sample := range audioChunk {
+	for _, sample := range fftWindow {
 		sumSquares += sample * sample
 	}
-	analysis.RMSLevel = math.Sqrt(sumSquares / float64(len(audioChunk)))
+	analysis.RMSLevel = math.Sqrt(sumSquares / float64(len(fftWindow)))
 
 	// Bin frequencies into per-bar raw average magnitudes (shared with BinFFT).
 	// Write into the caller's buffer when supplied; otherwise use a local scratch.

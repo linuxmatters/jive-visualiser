@@ -13,6 +13,7 @@ import (
 	"unsafe"
 
 	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
+	"github.com/linuxmatters/jive-visualiser/internal/encoder"
 	"github.com/linuxmatters/jive-visualiser/internal/yuv"
 )
 
@@ -20,71 +21,6 @@ const (
 	width  = 1280
 	height = 720
 )
-
-// convertRGBAToYUVGo mirrors the production hot path (convertRGBAToYUV in
-// internal/encoder/frame.go): RGBA input converted over a yuv.RowPool. The
-// production function is unexported, so the loop is replicated here.
-func convertRGBAToYUVGo(pool *yuv.RowPool, rgbaData []byte, yuvFrame *ffmpeg.AVFrame, width int) {
-	yPlane := yuvFrame.Data().Get(0)
-	uPlane := yuvFrame.Data().Get(1)
-	vPlane := yuvFrame.Data().Get(2)
-
-	yLinesize := yuvFrame.Linesize().Get(0)
-	uLinesize := yuvFrame.Linesize().Get(1)
-	vLinesize := yuvFrame.Linesize().Get(2)
-
-	pool.Run(func(startY, endY int) {
-		// Align startY to even for correct UV row calculation
-		evenStart := startY
-		if evenStart&1 != 0 {
-			evenStart++
-		}
-
-		// Process even rows: Y + UV
-		for y := evenStart; y < endY; y += 2 {
-			yPtr := unsafe.Add(yPlane, y*yLinesize)
-			uvY := y >> 1
-			uRowPtr := unsafe.Add(uPlane, uvY*uLinesize)
-			vRowPtr := unsafe.Add(vPlane, uvY*vLinesize)
-			rgbaIdx := y * width * 4
-
-			for x := range width {
-				r := int32(rgbaData[rgbaIdx])
-				g := int32(rgbaData[rgbaIdx+1])
-				b := int32(rgbaData[rgbaIdx+2])
-				rgbaIdx += 4 // Skip alpha
-
-				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
-
-				// UV subsampling: every other pixel on even rows
-				if (x & 1) == 0 {
-					uvX := x >> 1
-					*(*uint8)(unsafe.Add(uRowPtr, uvX)) = yuv.RGBToCb(r, g, b)
-					*(*uint8)(unsafe.Add(vRowPtr, uvX)) = yuv.RGBToCr(r, g, b)
-				}
-			}
-		}
-
-		// Process odd rows: Y only (no UV)
-		oddStart := startY
-		if oddStart&1 == 0 {
-			oddStart++
-		}
-		for y := oddStart; y < endY; y += 2 {
-			yPtr := unsafe.Add(yPlane, y*yLinesize)
-			rgbaIdx := y * width * 4
-
-			for x := range width {
-				r := int32(rgbaData[rgbaIdx])
-				g := int32(rgbaData[rgbaIdx+1])
-				b := int32(rgbaData[rgbaIdx+2])
-				rgbaIdx += 4 // Skip alpha
-
-				*(*uint8)(unsafe.Add(yPtr, x)) = yuv.RGBToY(r, g, b)
-			}
-		}
-	})
-}
 
 func checkFFmpeg(ret int, err error, op string) error {
 	if err != nil {
@@ -168,7 +104,7 @@ func run() error {
 		defer pool.Close()
 
 		for i := 0; i < *iterations; i++ {
-			convertRGBAToYUVGo(pool, rgbaData, yuvFrame, width)
+			encoder.ConvertRGBAToYUV(pool, rgbaData, yuvFrame, width)
 		}
 	case "swscale":
 		swsCtx := ffmpeg.SwsAllocContext()
