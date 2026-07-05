@@ -44,7 +44,7 @@ func StyledHelpPrinter() kong.HelpPrinter {
 	return kong.HelpPrinter(func(options kong.HelpOptions, ctx *kong.Context) error {
 		var sb strings.Builder
 
-		sb.WriteString(helpTitleStyle.Render("Jive Visualiser 🔥"))
+		sb.WriteString(helpTitleStyle.Render("Jive Visualiser ✨"))
 		sb.WriteString("\n")
 		sb.WriteString(helpDescStyle.Render("Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies."))
 		sb.WriteString("\n")

@@ -1,4 +1,4 @@
-# Jive Visualiser 🔥
+# Jive Visualiser ✨
 
 > Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies.
 

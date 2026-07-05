@@ -459,7 +459,7 @@ func (m *Model) renderFinalProgress() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.FireYellow).
-		Render("Jive Visualiser 🔥")
+		Render("Jive Visualiser ✨")
 
 	s.WriteString(title)
 	s.WriteString("\n")
@@ -522,7 +522,7 @@ func (m *Model) renderProgress() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.FireYellow).
-		Render("Jive Visualiser 🔥")
+		Render("Jive Visualiser ✨")
 
 	s.WriteString(title)
 	s.WriteString("\n")
