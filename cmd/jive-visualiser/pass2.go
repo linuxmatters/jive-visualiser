@@ -47,7 +47,6 @@ type pass2Runner struct {
 	harmonicaVel      []float64
 	barHeights        []float64
 	rearrangedHeights []float64
-	barHeightsCopy    []float64
 
 	previewImgs [2]*image.RGBA
 	previewIdx  int
@@ -90,13 +89,11 @@ func (r *pass2Runner) progressDue(interval time.Duration) bool {
 }
 
 func (r *pass2Runner) renderProgressMessage(frameNum int, img *image.RGBA, elapsed time.Duration, fileSize int64) ui.RenderProgress {
-	copy(r.barHeightsCopy, r.rearrangedHeights)
-
 	return ui.RenderProgress{
 		Frame:       frameNum + 1,
 		TotalFrames: r.numFrames,
 		Elapsed:     elapsed,
-		BarHeights:  r.barHeightsCopy,
+		BarHeights:  append([]float64(nil), r.rearrangedHeights...),
 		FileSize:    fileSize,
 		Sensitivity: r.sensitivity,
 		FrameData:   r.copyPreviewFrame(img),
@@ -244,7 +241,6 @@ func (r *pass2Runner) setupRenderState() {
 
 	r.barHeights = make([]float64, config.NumBars)
 	r.rearrangedHeights = make([]float64, config.NumBars)
-	r.barHeightsCopy = make([]float64, config.NumBars)
 }
 
 func (r *pass2Runner) setupPreviewBuffers() {

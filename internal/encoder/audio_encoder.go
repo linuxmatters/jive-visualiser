@@ -135,7 +135,10 @@ func (a *audioEncoder) writeSamples(samples []float32, pkt *ffmpeg.AVPacket, wri
 			return err
 		}
 
-		_, _ = ffmpeg.AVFrameMakeWritable(a.frame)
+		ret, err := ffmpeg.AVFrameMakeWritable(a.frame)
+		if err := checkFFmpeg(ret, err, "make audio frame writable"); err != nil {
+			return err
+		}
 
 		var writeErr error
 		if a.outputChannels == 2 {
@@ -152,7 +155,7 @@ func (a *audioEncoder) writeSamples(samples []float32, pkt *ffmpeg.AVPacket, wri
 		a.frame.SetPts(a.nextPts)
 		a.nextPts += int64(encoderFrameSize)
 
-		ret, err := ffmpeg.AVCodecSendFrame(a.codec, a.frame)
+		ret, err = ffmpeg.AVCodecSendFrame(a.codec, a.frame)
 		if err := checkFFmpeg(ret, err, "send audio frame to encoder"); err != nil {
 			return err
 		}
@@ -183,7 +186,10 @@ func (a *audioEncoder) flush(pkt *ffmpeg.AVPacket, writePacket func(*ffmpeg.AVPa
 		}
 		copy(frameSamples, partialSamples)
 
-		_, _ = ffmpeg.AVFrameMakeWritable(a.frame)
+		ret, err := ffmpeg.AVFrameMakeWritable(a.frame)
+		if err := checkFFmpeg(ret, err, "make final audio frame writable"); err != nil {
+			return err
+		}
 
 		var writeErr error
 		if a.outputChannels == 2 {
@@ -199,14 +205,17 @@ func (a *audioEncoder) flush(pkt *ffmpeg.AVPacket, writePacket func(*ffmpeg.AVPa
 		a.frame.SetPts(a.nextPts)
 		a.nextPts += int64(encoderFrameSize)
 
-		ret, err := ffmpeg.AVCodecSendFrame(a.codec, a.frame)
+		ret, err = ffmpeg.AVCodecSendFrame(a.codec, a.frame)
 		if err := checkFFmpeg(ret, err, "send final audio frame"); err != nil {
 			return err
 		}
 	}
 
 	// Send a NULL frame to enter draining mode.
-	_, _ = ffmpeg.AVCodecSendFrame(a.codec, nil)
+	ret, err := ffmpeg.AVCodecSendFrame(a.codec, nil)
+	if err := checkFFmpeg(ret, err, "drain audio encoder"); err != nil {
+		return err
+	}
 
 	return a.receiveAndWritePackets(pkt, writePacket)
 }
