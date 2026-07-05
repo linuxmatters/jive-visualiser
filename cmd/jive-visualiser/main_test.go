@@ -176,7 +176,6 @@ func TestPass2ProgressMessageFieldsAndPreviewCopy(t *testing.T) {
 		audioCodecInfo:    "AAC 44.1㎑ mono",
 		sensitivity:       1.25,
 		rearrangedHeights: []float64{1, 2, 3},
-		barHeightsCopy:    make([]float64, 3),
 		previewImgs: [2]*image.RGBA{
 			image.NewRGBA(image.Rect(0, 0, config.Width, config.Height)),
 			image.NewRGBA(image.Rect(0, 0, config.Width, config.Height)),
@@ -230,6 +229,11 @@ func TestPass2ProgressMessageFieldsAndPreviewCopy(t *testing.T) {
 			t.Errorf("BarHeights[%d] = %v, want %v", i, msg.BarHeights[i], want)
 		}
 	}
+
+	runner.rearrangedHeights[0] = 99
+	if msg.BarHeights[0] != 1 {
+		t.Fatalf("BarHeights shares producer storage, got %v want 1", msg.BarHeights[0])
+	}
 }
 
 func TestPass2ProgressMessageOmitsPreviewWhenDisabled(t *testing.T) {
@@ -238,7 +242,6 @@ func TestPass2ProgressMessageOmitsPreviewWhenDisabled(t *testing.T) {
 			noPreview: true,
 		},
 		enc:               &encoder.Encoder{},
-		barHeightsCopy:    make([]float64, 1),
 		rearrangedHeights: []float64{1},
 	}
 	msg := runner.renderProgressMessage(0, image.NewRGBA(image.Rect(0, 0, 1, 1)), time.Second, 0)
