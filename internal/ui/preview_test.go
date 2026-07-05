@@ -154,9 +154,9 @@ func previewBenchmarkSizes() []struct {
 
 func benchmarkFrame(width, height int) *image.RGBA {
 	frame := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
+	for y := range height {
 		rowOffset := y * frame.Stride
-		for x := 0; x < width; x++ {
+		for x := range width {
 			offset := rowOffset + x*4
 			frame.Pix[offset] = uint8(x)
 			frame.Pix[offset+1] = uint8(y)

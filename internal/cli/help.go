@@ -9,7 +9,6 @@ import (
 	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
-// Custom help styles, fire theme
 var (
 	helpTitleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -45,19 +44,16 @@ func StyledHelpPrinter() kong.HelpPrinter {
 	return kong.HelpPrinter(func(options kong.HelpOptions, ctx *kong.Context) error {
 		var sb strings.Builder
 
-		// Title and description
 		sb.WriteString(helpTitleStyle.Render("Jive Visualiser 🔥"))
 		sb.WriteString("\n")
 		sb.WriteString(helpDescStyle.Render("Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies."))
 		sb.WriteString("\n")
 
-		// Usage
 		sb.WriteString(helpSectionStyle.Render("Usage:"))
 		sb.WriteString("\n  ")
 		fmt.Fprintf(&sb, "%s [<input> [<output>]] [flags]", ctx.Model.Name)
 		sb.WriteString("\n")
 
-		// Arguments section
 		args := getArguments(ctx)
 		if len(args) > 0 {
 			sb.WriteString("\n")
@@ -67,7 +63,6 @@ func StyledHelpPrinter() kong.HelpPrinter {
 			sb.WriteString("\n")
 		}
 
-		// Flags section
 		flags := getFlags(ctx)
 		if len(flags) > 0 {
 			sb.WriteString("\n")
@@ -83,7 +78,6 @@ func StyledHelpPrinter() kong.HelpPrinter {
 	})
 }
 
-// argumentTable renders parsed arguments into aligned name/help columns.
 func argumentTable(args []argument) string {
 	t := theme.BorderlessTable().StyleFunc(func(_, col int) lipgloss.Style {
 		if col == 0 {
@@ -97,8 +91,6 @@ func argumentTable(args []argument) string {
 	return t.Render()
 }
 
-// flagTable renders parsed flags into aligned name/help columns, appending the
-// default-value suffix to the help cell.
 func flagTable(flags []flag) string {
 	t := theme.BorderlessTable().StyleFunc(func(_, col int) lipgloss.Style {
 		if col == 0 {
@@ -147,7 +139,6 @@ func getArguments(ctx *kong.Context) []argument {
 func getFlags(ctx *kong.Context) []flag {
 	var flags []flag
 
-	// Always include help flag
 	flags = append(flags, flag{
 		flags: "-h, --help",
 		help:  "Show context-sensitive help.",
@@ -155,7 +146,7 @@ func getFlags(ctx *kong.Context) []flag {
 
 	for _, f := range ctx.Model.Flags {
 		if f.Name == "help" {
-			continue // Already added
+			continue
 		}
 
 		var flagStr string
@@ -169,7 +160,6 @@ func getFlags(ctx *kong.Context) []flag {
 			flagStr += "=" + strings.ToUpper(f.PlaceHolder)
 		}
 
-		// Only show default if it's a meaningful value (not empty, not type placeholder)
 		defaultVal := ""
 		if f.HasDefault && !f.IsBool() {
 			val := f.Default

@@ -133,6 +133,55 @@ func TestStatMissingPathKeepsSpecificError(t *testing.T) {
 	}
 }
 
+func TestNewRunConfigMapsCLIOptions(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.wav")
+	background := filepath.Join(dir, "background.png")
+	thumbnail := filepath.Join(dir, "thumbnail.png")
+	for _, path := range []string{input, background, thumbnail} {
+		if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+
+	episode := 42
+	got, err := newRunConfig(cliOptions{
+		Input:           input,
+		Output:          filepath.Join(dir, "out.mp4"),
+		Episode:         &episode,
+		Title:           "A Proper Jive",
+		NoPreview:       true,
+		Channels:        2,
+		Encoder:         "software",
+		BarColor:        "#112233",
+		TextColor:       "445566",
+		BackgroundImage: background,
+		ThumbnailImage:  thumbnail,
+	})
+	if err != nil {
+		t.Fatalf("newRunConfig: %v", err)
+	}
+
+	if got.inputFile != input || got.outputFile != filepath.Join(dir, "out.mp4") {
+		t.Fatalf("paths = %q, %q", got.inputFile, got.outputFile)
+	}
+	if got.channels != 2 || !got.noPreview || got.hwAccel != encoder.HWAccelNone {
+		t.Fatalf("channels/noPreview/hwAccel = %d/%v/%q", got.channels, got.noPreview, got.hwAccel)
+	}
+	if got.meta.Title != "A Proper Jive" || got.meta.Episode == nil || *got.meta.Episode != episode {
+		t.Fatalf("meta = %#v", got.meta)
+	}
+	if got.runtimeConfig.BarColor != (config.OptionalColor{R: 0x11, G: 0x22, B: 0x33, Set: true}) {
+		t.Fatalf("bar colour = %#v", got.runtimeConfig.BarColor)
+	}
+	if got.runtimeConfig.TextColor != (config.OptionalColor{R: 0x44, G: 0x55, B: 0x66, Set: true}) {
+		t.Fatalf("text colour = %#v", got.runtimeConfig.TextColor)
+	}
+	if got.runtimeConfig.BackgroundImagePath != background || got.runtimeConfig.ThumbnailImagePath != thumbnail {
+		t.Fatalf("image paths = %q, %q", got.runtimeConfig.BackgroundImagePath, got.runtimeConfig.ThumbnailImagePath)
+	}
+}
+
 // TestPrefillWritesWholeBuffer asserts the whole FFT prefill (all n samples
 // FillFFTBuffer returned) reaches the encoder, not just one frame's worth.
 // Truncating to samplesPerFrame dropped ~13 ms of audio at 44.1 kHz. It pins
@@ -332,7 +381,7 @@ func TestPass2PreviewPayloadCadence(t *testing.T) {
 		lastPreviewUpdate: time.Unix(1, 0),
 	}
 
-	preview, previewFrame := runner.previewPayloadIfDue(4, frame, runner.lastPreviewUpdate.Add(99*time.Millisecond), previewUpdateInterval)
+	preview, previewFrame := runner.previewPayloadIfDue(4, frame, runner.lastPreviewUpdate.Add(99*time.Millisecond))
 	if preview != "" {
 		t.Fatal("Preview is set before preview interval")
 	}
@@ -340,7 +389,7 @@ func TestPass2PreviewPayloadCadence(t *testing.T) {
 		t.Fatalf("PreviewFrame = %d, want 0 before preview interval", previewFrame)
 	}
 
-	preview, previewFrame = runner.previewPayloadIfDue(4, frame, runner.lastPreviewUpdate.Add(previewUpdateInterval), previewUpdateInterval)
+	preview, previewFrame = runner.previewPayloadIfDue(4, frame, runner.lastPreviewUpdate.Add(previewUpdateInterval))
 	if preview == "" {
 		t.Fatal("Preview is empty after preview interval")
 	}
@@ -356,7 +405,7 @@ func TestPass2PreviewPayloadDisabled(t *testing.T) {
 		lastPreviewUpdate: time.Unix(1, 0),
 	}
 
-	preview, previewFrame := runner.previewPayloadIfDue(0, frame, runner.lastPreviewUpdate.Add(time.Second), previewUpdateInterval)
+	preview, previewFrame := runner.previewPayloadIfDue(0, frame, runner.lastPreviewUpdate.Add(time.Second))
 	if preview != "" {
 		t.Fatal("Preview is set when preview is disabled")
 	}
