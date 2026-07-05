@@ -35,8 +35,10 @@ type HWEncoder struct {
 type hwEncoderOptionPolicy int
 
 const (
+	// hwEncoderOptionsNone sets no dispatched options. Used by encoders whose
+	// options come from elsewhere (the software encoder, see
+	// setSoftwareEncoderOptions) or that take no options (auto).
 	hwEncoderOptionsNone hwEncoderOptionPolicy = iota
-	hwEncoderOptionsSoftware
 	hwEncoderOptionsNVENC
 	hwEncoderOptionsQSV
 	hwEncoderOptionsVAAPI
@@ -100,7 +102,7 @@ var hwEncoderRegistry = []hwEncoderRegistryEntry{
 		priority:           hwEncoderPriority{linux: 100, darwin: 100},
 		probePixelFormat:   ffmpeg.AVPixFmtYuv420P,
 		runtimePixelFormat: ffmpeg.AVPixFmtYuv420P,
-		optionPolicy:       hwEncoderOptionsSoftware,
+		optionPolicy:       hwEncoderOptionsNone,
 		cliSelectable:      true,
 	},
 	{

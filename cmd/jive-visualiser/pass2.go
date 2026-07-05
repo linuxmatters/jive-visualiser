@@ -102,7 +102,6 @@ func (r *pass2Runner) renderProgressMessage(frameNum int, preview string, previe
 		Elapsed:      elapsed,
 		BarHeights:   append([]float64(nil), r.rearrangedHeights...),
 		FileSize:     fileSize,
-		Sensitivity:  r.sensitivity,
 		Preview:      preview,
 		PreviewFrame: previewFrame,
 		VideoCodec:   fmt.Sprintf("H.264 %d×%d", config.Width, config.Height),

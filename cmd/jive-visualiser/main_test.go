@@ -315,9 +315,6 @@ func TestPass2ProgressMessageFieldsAndPreviewPayload(t *testing.T) {
 	if msg.FileSize != 2048 {
 		t.Errorf("FileSize = %d, want 2048", msg.FileSize)
 	}
-	if msg.Sensitivity != 1.25 {
-		t.Errorf("Sensitivity = %v, want 1.25", msg.Sensitivity)
-	}
 	if msg.VideoCodec != "H.264 1280×720" {
 		t.Errorf("VideoCodec = %q, want H.264 1280×720", msg.VideoCodec)
 	}

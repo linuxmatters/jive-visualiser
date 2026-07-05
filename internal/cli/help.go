@@ -162,10 +162,7 @@ func getFlags(ctx *kong.Context) []flag {
 
 		defaultVal := ""
 		if f.HasDefault && !f.IsBool() {
-			val := f.Default
-			if val != "" && val != "STRING" && val != "BOOL" {
-				defaultVal = val
-			}
+			defaultVal = f.Default
 		}
 
 		flags = append(flags, flag{

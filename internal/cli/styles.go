@@ -13,30 +13,30 @@ var (
 	// TitleStyle renders the bold red banner heading.
 	TitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(theme.JiveRed).
+			Foreground(theme.FireDeepRed).
 			MarginBottom(1)
 
 	// HeaderStyle renders a section header.
 	HeaderStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(theme.GoldOrange).
+			Foreground(theme.FireGold).
 			MarginTop(1).
 			MarginBottom(1)
 
 	// ErrorStyle renders an error message.
 	ErrorStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(theme.JiveRed)
+			Foreground(theme.FireDeepRed)
 
 	// WarningStyle renders a warning message.
 	WarningStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(theme.GoldOrange)
+			Foreground(theme.FireGold)
 
 	// HighlightStyle emphasises important values.
 	HighlightStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(theme.NeonYellow)
+			Foreground(theme.FireNeon)
 
 	// KeyStyle renders the key of a key-value pair.
 	KeyStyle = lipgloss.NewStyle().

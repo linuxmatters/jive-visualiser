@@ -52,7 +52,6 @@ type RenderProgress struct {
 	Elapsed      time.Duration
 	BarHeights   []float64
 	FileSize     int64
-	Sensitivity  float64
 	Preview      string
 	PreviewFrame int
 	VideoCodec   string
@@ -94,6 +93,20 @@ type AudioProfile struct {
 	DynamicRange float64 // in dB (converted from the raw peak/RMS ratio)
 	OptimalScale float64
 	AnalysisTime time.Duration
+}
+
+// decibelFloor is the level reported for silence. A silent file yields a zero
+// magnitude, and 20·log10(0) is -Inf; clamping to this floor keeps the summary
+// showing a finite "-120 ㏈" instead.
+const decibelFloor = -120.0
+
+// toDecibels converts a linear magnitude to decibels, clamping non-positive
+// input to decibelFloor so silence renders as a finite level, not "-Inf".
+func toDecibels(v float64) float64 {
+	if v <= 0 {
+		return decibelFloor
+	}
+	return 20 * math.Log10(v)
 }
 
 // progressQuitMsg is sent when it's time to quit after showing completion
@@ -316,9 +329,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AnalysisComplete:
 		m.audioProfile = &AudioProfile{
 			Duration:     msg.Duration,
-			PeakLevel:    20 * math.Log10(msg.PeakMagnitude),
-			RMSLevel:     20 * math.Log10(msg.RMSLevel),
-			DynamicRange: 20 * math.Log10(msg.DynamicRange),
+			PeakLevel:    toDecibels(msg.PeakMagnitude),
+			RMSLevel:     toDecibels(msg.RMSLevel),
+			DynamicRange: toDecibels(msg.DynamicRange),
 			OptimalScale: msg.OptimalScale,
 			AnalysisTime: msg.AnalysisTime,
 		}
@@ -641,12 +654,13 @@ func (m *Model) recordSpeedSample(msg RenderProgress) {
 func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	s.WriteString("\n")
 
-	s.WriteString(renderLiveSpectrumBlock(m.spectrum.positions, m.spectrumWidth()))
+	// The spectrum is sized to the preview box's rendered width so its left edge
+	// and width line up with the preview below.
+	s.WriteString(renderSpectrum(m.spectrum.positions, m.spectrumWidth()))
 
-	preview := renderLivePreviewBlock(m.noPreview, m.cachedPreview)
-	if preview != "" {
+	if !m.noPreview && m.cachedPreview != "" {
 		s.WriteString("\n")
-		s.WriteString(preview)
+		s.WriteString(m.cachedPreview)
 	}
 }
 
@@ -706,12 +720,6 @@ func renderLivePass2Cards(stats liveRenderStats, speedHistory []float64, fileSiz
 	return lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", sizeCard, " ", etaCard)
 }
 
-// renderLiveSpectrumBlock sizes the spectrum to the preview box's rendered
-// width, so its left edge and width line up with the preview below.
-func renderLiveSpectrumBlock(positions []float64, width int) string {
-	return renderSpectrum(positions, width)
-}
-
 // updatePreviewCache stores the latest preview frame on the model so View can
 // read it without side-effects. It runs in Update when a RenderProgress arrives,
 // keeping the last non-empty preview when a message carries none so the block
@@ -724,15 +732,6 @@ func (m *Model) updatePreviewCache(state RenderProgress) {
 		m.cachedPreview = state.Preview
 		m.cachedFrameNum = state.PreviewFrame
 	}
-}
-
-// renderLivePreviewBlock returns the preview to display from the model's cached
-// frame. It is pure: the cache is populated in Update via updatePreviewCache.
-func renderLivePreviewBlock(noPreview bool, cachedPreview string) string {
-	if noPreview {
-		return ""
-	}
-	return cachedPreview
 }
 
 // renderLiveFrameSourceLine renders the "<spinner> Frame X / Y … video · audio"
