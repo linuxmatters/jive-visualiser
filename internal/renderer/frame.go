@@ -36,7 +36,8 @@ type Frame struct {
 	maxBarHeight    int
 	intensityTable  []uint8    // Intensity values for the opaque gradient (0.5 dim tip to 1.0 bright centre)
 	barColorTable   [][3]uint8 // Bar colours pre-dimmed for each of the 256 intensity levels
-	framingLineData []byte     // Pre-rendered framing line pixel pattern
+	barScanlineData [256][config.BarWidth * 4]byte
+	framingLineData []byte // Pre-rendered framing line pixel pattern
 	hasBackground   bool
 }
 
@@ -73,6 +74,18 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 		barColorTable[intensity][2] = uint8(float64(barB) * factor)
 	}
 
+	var barScanlineData [256][config.BarWidth * 4]byte
+	for intensity := range 256 {
+		colors := &barColorTable[intensity]
+		for px := range config.BarWidth {
+			offset := px * 4
+			barScanlineData[intensity][offset] = colors[0]
+			barScanlineData[intensity][offset+1] = colors[1]
+			barScanlineData[intensity][offset+2] = colors[2]
+			barScanlineData[intensity][offset+3] = 255
+		}
+	}
+
 	// Pre-render the framing-line pattern in the text colour.
 	framingLineData := make([]byte, totalWidth*4)
 	for px := range totalWidth {
@@ -104,6 +117,7 @@ func NewFrame(bgImage *image.RGBA, fontFace font.Face, meta PodcastMeta, runtime
 		maxBarHeight:    maxBarHeight,
 		intensityTable:  intensityTable,
 		barColorTable:   barColorTable,
+		barScanlineData: barScanlineData,
 		framingLineData: framingLineData,
 		hasBackground:   bgImage != nil,
 	}
@@ -147,9 +161,6 @@ func (f *Frame) Draw(barHeights []float64) {
 //
 // This computes 1/4 of the pixels and is roughly 4x faster than rendering each.
 func (f *Frame) drawBars(barHeights []float64) {
-	// Pre-allocate pixel pattern buffer (reused for all bars)
-	pixelPattern := make([]byte, config.BarWidth*4)
-
 	// Render only the left half (bars 0-31) upward, then mirror each bar in 3
 	// operations to fill the remaining 3/4 of the bars within the same iteration.
 	// The mirrors read only pixels written by renderBar earlier in this iteration
@@ -174,7 +185,7 @@ func (f *Frame) drawBars(barHeights []float64) {
 		// no background blending needed.
 		clampedHeight := min(barHeight, f.maxBarHeight)
 		yStart := f.centerY - clampedHeight - config.CenterGap/2
-		f.renderBar(xLeft, yStart, yEnd, clampedHeight, pixelPattern)
+		f.renderBar(xLeft, yStart, yEnd, clampedHeight)
 
 		// Mirror using the same clamped geometry as renderBar:
 		// 1. Vertical mirror → left-side downward bar
@@ -189,7 +200,7 @@ func (f *Frame) drawBars(barHeights []float64) {
 }
 
 // renderBar renders a single upward bar with opaque gradient (no alpha blending)
-func (f *Frame) renderBar(x, yStart, yEnd, barHeight int, pixelPattern []byte) {
+func (f *Frame) renderBar(x, yStart, yEnd, barHeight int) {
 	for y := yStart; y < yEnd; y++ {
 		if y < 0 {
 			continue
@@ -202,20 +213,10 @@ func (f *Frame) renderBar(x, yStart, yEnd, barHeight int, pixelPattern []byte) {
 			intensityIndex = f.maxBarHeight - 1
 		}
 		intensity := f.intensityTable[intensityIndex]
-		colors := &f.barColorTable[intensity]
-
-		// Fill pixel pattern once for this scanline
-		for px := range config.BarWidth {
-			offset := px * 4
-			pixelPattern[offset] = colors[0]
-			pixelPattern[offset+1] = colors[1]
-			pixelPattern[offset+2] = colors[2]
-			pixelPattern[offset+3] = 255 // Fully opaque
-		}
 
 		// Write entire bar width with single copy
 		offset := y*f.img.Stride + x*4
-		copy(f.img.Pix[offset:offset+config.BarWidth*4], pixelPattern)
+		copy(f.img.Pix[offset:offset+config.BarWidth*4], f.barScanlineData[intensity][:])
 	}
 }
 

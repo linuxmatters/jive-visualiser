@@ -128,6 +128,7 @@ bench-yuv-hyperfine:
 
     echo "Building bench-yuv tool..."
     go build -o ./bench-yuv ./cmd/bench-yuv
+    trap 'rm -f ./bench-yuv' EXIT
 
     echo ""
     echo "Benchmarking RGB→YUV420P colourspace conversion (1280×720, 1000 iterations)"
@@ -140,7 +141,6 @@ bench-yuv-hyperfine:
         --command-name "FFmpeg swscale" "./bench-yuv --impl=swscale --iterations=1000" \
         --export-markdown testdata/bench-yuv.md
 
-    rm -f ./bench-yuv
     echo ""
     echo "Results saved to testdata/bench-yuv.md"
 

@@ -103,13 +103,15 @@ func TestUpdateRenderProgressStoresState(t *testing.T) {
 		{
 			name: "mid render with codecs",
 			msg: RenderProgress{
-				Frame:       250,
-				TotalFrames: 1000,
-				Elapsed:     5 * time.Second,
-				FileSize:    1024,
-				Sensitivity: 1.5,
-				VideoCodec:  "libx264",
-				AudioCodec:  "aac",
+				Frame:        250,
+				TotalFrames:  1000,
+				Elapsed:      5 * time.Second,
+				FileSize:     1024,
+				Sensitivity:  1.5,
+				Preview:      "preview",
+				PreviewFrame: 250,
+				VideoCodec:   "libx264",
+				AudioCodec:   "aac",
 			},
 			wantCmd: true,
 		},
@@ -131,6 +133,8 @@ func TestUpdateRenderProgressStoresState(t *testing.T) {
 			if got.renderState.Frame != tc.msg.Frame ||
 				got.renderState.TotalFrames != tc.msg.TotalFrames ||
 				got.renderState.Elapsed != tc.msg.Elapsed ||
+				got.renderState.Preview != tc.msg.Preview ||
+				got.renderState.PreviewFrame != tc.msg.PreviewFrame ||
 				got.renderState.VideoCodec != tc.msg.VideoCodec ||
 				got.renderState.AudioCodec != tc.msg.AudioCodec {
 				t.Errorf("renderState = %+v, want %+v", got.renderState, tc.msg)
@@ -457,6 +461,63 @@ func TestUpdateSpinnerTick(t *testing.T) {
 	}
 	if _, ok := assertCmdMsg(t, cmd).(spinner.TickMsg); !ok {
 		t.Error("spinner.TickMsg cmd did not re-issue a spinner.TickMsg")
+	}
+}
+
+func TestRenderLivePreviewBlockCachesFreshPreview(t *testing.T) {
+	preview, cachedPreview, cachedFrameNum := renderLivePreviewBlock(
+		false,
+		RenderProgress{Frame: 10, Preview: "fresh-preview", PreviewFrame: 10},
+		"",
+		0,
+	)
+
+	if preview != "fresh-preview" {
+		t.Fatalf("preview = %q, want fresh-preview", preview)
+	}
+	if cachedPreview != "fresh-preview" {
+		t.Fatalf("cachedPreview = %q, want fresh-preview", cachedPreview)
+	}
+	if cachedFrameNum != 10 {
+		t.Fatalf("cachedFrameNum = %d, want 10", cachedFrameNum)
+	}
+}
+
+func TestRenderLivePreviewBlockReusesStalePreview(t *testing.T) {
+	preview, cachedPreview, cachedFrameNum := renderLivePreviewBlock(
+		false,
+		RenderProgress{Frame: 11},
+		"cached-preview",
+		10,
+	)
+
+	if preview != "cached-preview" {
+		t.Fatalf("preview = %q, want cached-preview", preview)
+	}
+	if cachedPreview != "cached-preview" {
+		t.Fatalf("cachedPreview = %q, want cached-preview", cachedPreview)
+	}
+	if cachedFrameNum != 10 {
+		t.Fatalf("cachedFrameNum = %d, want 10", cachedFrameNum)
+	}
+}
+
+func TestRenderLivePreviewBlockHonoursNoPreview(t *testing.T) {
+	preview, cachedPreview, cachedFrameNum := renderLivePreviewBlock(
+		true,
+		RenderProgress{Frame: 10, Preview: "fresh-preview", PreviewFrame: 10},
+		"cached-preview",
+		9,
+	)
+
+	if preview != "" {
+		t.Fatalf("preview = %q, want empty preview", preview)
+	}
+	if cachedPreview != "cached-preview" {
+		t.Fatalf("cachedPreview = %q, want cached-preview", cachedPreview)
+	}
+	if cachedFrameNum != 9 {
+		t.Fatalf("cachedFrameNum = %d, want 9", cachedFrameNum)
 	}
 }
 

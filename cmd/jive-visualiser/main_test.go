@@ -240,10 +240,7 @@ func TestAudioConvBufLen(t *testing.T) {
 	}
 }
 
-func TestPass2ProgressMessageFieldsAndPreviewCopy(t *testing.T) {
-	src := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
-	src.Pix[0] = 99
-
+func TestPass2ProgressMessageFieldsAndPreviewPayload(t *testing.T) {
 	runner := &pass2Runner{
 		cfg: pass2Config{
 			noPreview: false,
@@ -253,13 +250,9 @@ func TestPass2ProgressMessageFieldsAndPreviewCopy(t *testing.T) {
 		audioCodecInfo:    "AAC 44.1㎑ mono",
 		sensitivity:       1.25,
 		rearrangedHeights: []float64{1, 2, 3},
-		previewImgs: [2]*image.RGBA{
-			image.NewRGBA(image.Rect(0, 0, config.Width, config.Height)),
-			image.NewRGBA(image.Rect(0, 0, config.Width, config.Height)),
-		},
 	}
 
-	msg := runner.renderProgressMessage(4, src, 2*time.Second, 2048)
+	msg := runner.renderProgressMessage(4, "preview", 5, 2*time.Second, 2048)
 
 	if msg.Frame != 5 {
 		t.Errorf("Frame = %d, want 5", msg.Frame)
@@ -285,21 +278,11 @@ func TestPass2ProgressMessageFieldsAndPreviewCopy(t *testing.T) {
 	if msg.EncoderName != "libx264" {
 		t.Errorf("EncoderName = %q, want libx264", msg.EncoderName)
 	}
-	if msg.FrameData == nil {
-		t.Fatal("FrameData is nil")
+	if msg.Preview != "preview" {
+		t.Errorf("Preview = %q, want preview", msg.Preview)
 	}
-	if msg.FrameData == src {
-		t.Fatal("FrameData points at the source frame")
-	}
-	if got := msg.FrameData.Pix[0]; got != 99 {
-		t.Errorf("FrameData first byte = %d, want 99", got)
-	}
-	src.Pix[0] = 12
-	if got := msg.FrameData.Pix[0]; got != 99 {
-		t.Errorf("FrameData changed after source mutation: %d, want 99", got)
-	}
-	if runner.previewIdx != 1 {
-		t.Errorf("previewIdx = %d, want 1", runner.previewIdx)
+	if msg.PreviewFrame != 5 {
+		t.Errorf("PreviewFrame = %d, want 5", msg.PreviewFrame)
 	}
 	for i, want := range []float64{1, 2, 3} {
 		if msg.BarHeights[i] != want {
@@ -321,21 +304,64 @@ func TestPass2ProgressMessageOmitsPreviewWhenDisabled(t *testing.T) {
 		enc:               &encoder.Encoder{},
 		rearrangedHeights: []float64{1},
 	}
-	msg := runner.renderProgressMessage(0, image.NewRGBA(image.Rect(0, 0, 1, 1)), time.Second, 0)
-	if msg.FrameData != nil {
-		t.Fatal("FrameData is set when preview is disabled")
+	msg := runner.renderProgressMessage(0, "", 0, time.Second, 0)
+	if msg.Preview != "" {
+		t.Fatal("Preview is set when preview is disabled")
+	}
+	if msg.PreviewFrame != 0 {
+		t.Fatal("PreviewFrame is set when preview is disabled")
 	}
 }
 
 func TestPass2ProgressDueUsesInterval(t *testing.T) {
-	runner := &pass2Runner{lastProgressUpdate: time.Now()}
-	if runner.progressDue(30 * time.Millisecond) {
+	now := time.Now()
+	runner := &pass2Runner{lastProgressUpdate: now}
+	if runner.progressDue(now.Add(29*time.Millisecond), 30*time.Millisecond) {
 		t.Fatal("progress is due before interval")
 	}
 
-	runner.lastProgressUpdate = time.Now().Add(-60 * time.Millisecond)
-	if !runner.progressDue(30 * time.Millisecond) {
+	if !runner.progressDue(now.Add(60*time.Millisecond), 30*time.Millisecond) {
 		t.Fatal("progress is not due after interval")
+	}
+}
+
+func TestPass2PreviewPayloadCadence(t *testing.T) {
+	frame := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
+	runner := &pass2Runner{
+		cfg:               pass2Config{},
+		lastPreviewUpdate: time.Unix(1, 0),
+	}
+
+	preview, previewFrame := runner.previewPayloadIfDue(4, frame, runner.lastPreviewUpdate.Add(99*time.Millisecond), previewUpdateInterval)
+	if preview != "" {
+		t.Fatal("Preview is set before preview interval")
+	}
+	if previewFrame != 0 {
+		t.Fatalf("PreviewFrame = %d, want 0 before preview interval", previewFrame)
+	}
+
+	preview, previewFrame = runner.previewPayloadIfDue(4, frame, runner.lastPreviewUpdate.Add(previewUpdateInterval), previewUpdateInterval)
+	if preview == "" {
+		t.Fatal("Preview is empty after preview interval")
+	}
+	if previewFrame != 5 {
+		t.Fatalf("PreviewFrame = %d, want 5", previewFrame)
+	}
+}
+
+func TestPass2PreviewPayloadDisabled(t *testing.T) {
+	frame := image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
+	runner := &pass2Runner{
+		cfg:               pass2Config{noPreview: true},
+		lastPreviewUpdate: time.Unix(1, 0),
+	}
+
+	preview, previewFrame := runner.previewPayloadIfDue(0, frame, runner.lastPreviewUpdate.Add(time.Second), previewUpdateInterval)
+	if preview != "" {
+		t.Fatal("Preview is set when preview is disabled")
+	}
+	if previewFrame != 0 {
+		t.Fatalf("PreviewFrame = %d, want 0 when preview is disabled", previewFrame)
 	}
 }
 

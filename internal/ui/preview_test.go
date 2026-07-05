@@ -101,3 +101,68 @@ func TestRenderPreviewBorderDimensions(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkDownsampleFrame(b *testing.B) {
+	for _, tc := range previewBenchmarkSizes() {
+		b.Run(tc.name, func(b *testing.B) {
+			frame := benchmarkFrame(tc.width, tc.height)
+			config := DefaultPreviewConfig()
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for range b.N {
+				preview := DownsampleFrame(frame, config)
+				if len(preview) == 0 {
+					b.Fatal("empty preview")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkRenderPreview(b *testing.B) {
+	for _, tc := range previewBenchmarkSizes() {
+		b.Run(tc.name, func(b *testing.B) {
+			frame := benchmarkFrame(tc.width, tc.height)
+			preview := DownsampleFrame(frame, DefaultPreviewConfig())
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for range b.N {
+				rendered := RenderPreview(preview)
+				if rendered == "" {
+					b.Fatal("empty rendered preview")
+				}
+			}
+		})
+	}
+}
+
+func previewBenchmarkSizes() []struct {
+	name          string
+	width, height int
+} {
+	return []struct {
+		name          string
+		width, height int
+	}{
+		{name: "720p", width: 1280, height: 720},
+		{name: "1080p", width: 1920, height: 1080},
+		{name: "4K", width: 3840, height: 2160},
+	}
+}
+
+func benchmarkFrame(width, height int) *image.RGBA {
+	frame := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		rowOffset := y * frame.Stride
+		for x := 0; x < width; x++ {
+			offset := rowOffset + x*4
+			frame.Pix[offset] = uint8(x)
+			frame.Pix[offset+1] = uint8(y)
+			frame.Pix[offset+2] = uint8(x + y)
+			frame.Pix[offset+3] = 255
+		}
+	}
+	return frame
+}

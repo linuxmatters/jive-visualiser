@@ -45,8 +45,10 @@ type StreamingReader struct {
 	// delay buffer is not drained twice.
 	drained bool
 
-	// Buffer for leftover samples from previous decode.
+	// Buffer for leftover samples from previous decode. sampleOffset points
+	// at the first unread sample so consumed prefixes can be reused later.
 	sampleBuffer []float64
+	sampleOffset int
 }
 
 // NewStreamingReader creates a streaming audio reader for the given file.
@@ -191,16 +193,18 @@ func (d *StreamingReader) growOutputBuffer(n int) error {
 // partial count, then io.EOF once the sample buffer is exhausted.
 func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 	numSamples := len(dst)
+	if numSamples == 0 {
+		return 0, nil
+	}
 
 	// Satisfy from the buffer when possible.
-	if len(d.sampleBuffer) >= numSamples {
-		copy(dst, d.sampleBuffer[:numSamples])
-		d.sampleBuffer = d.sampleBuffer[numSamples:]
+	if d.unreadSamples() >= numSamples {
+		d.consumeSamples(dst)
 		return numSamples, nil
 	}
 
 	// Decode more packets until the buffer holds enough samples.
-	for len(d.sampleBuffer) < numSamples {
+	for d.unreadSamples() < numSamples {
 		ret, err := ffmpeg.AVReadFrame(d.formatCtx, d.packet)
 		if err != nil {
 			if errors.Is(err, ffmpeg.AVErrorEOF) {
@@ -216,10 +220,9 @@ func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 						return 0, err
 					}
 				}
-				if len(d.sampleBuffer) > 0 {
-					n := min(numSamples, len(d.sampleBuffer))
-					copy(dst, d.sampleBuffer[:n])
-					d.sampleBuffer = d.sampleBuffer[n:]
+				if d.unreadSamples() > 0 {
+					n := min(numSamples, d.unreadSamples())
+					d.consumeSamples(dst[:n])
 					return n, nil
 				}
 				return 0, io.EOF
@@ -258,8 +261,7 @@ func (d *StreamingReader) ReadInto(dst []float64) (int, error) {
 		}
 	}
 
-	copy(dst, d.sampleBuffer[:numSamples])
-	d.sampleBuffer = d.sampleBuffer[numSamples:]
+	d.consumeSamples(dst)
 	return numSamples, nil
 }
 
@@ -383,9 +385,44 @@ func (d *StreamingReader) framePlanes() []unsafe.Pointer {
 // growSampleBuffer extends d.sampleBuffer by n elements and returns the newly
 // added tail region for in-place writing, reusing spare capacity where possible.
 func (d *StreamingReader) growSampleBuffer(n int) []float64 {
+	d.compactSampleBufferBeforeAppend(n)
 	start := len(d.sampleBuffer)
 	d.sampleBuffer = slices.Grow(d.sampleBuffer, n)[:start+n]
 	return d.sampleBuffer[start:]
+}
+
+func (d *StreamingReader) unreadSamples() int {
+	return len(d.sampleBuffer) - d.sampleOffset
+}
+
+func (d *StreamingReader) consumeSamples(dst []float64) {
+	copy(dst, d.sampleBuffer[d.sampleOffset:d.sampleOffset+len(dst)])
+	d.sampleOffset += len(dst)
+	if d.sampleOffset == len(d.sampleBuffer) {
+		d.resetSampleBuffer()
+	}
+}
+
+func (d *StreamingReader) resetSampleBuffer() {
+	d.sampleBuffer = d.sampleBuffer[:0]
+	d.sampleOffset = 0
+}
+
+func (d *StreamingReader) compactSampleBufferBeforeAppend(n int) {
+	if d.sampleOffset == 0 {
+		return
+	}
+	if d.unreadSamples() == 0 {
+		d.resetSampleBuffer()
+		return
+	}
+	if len(d.sampleBuffer)+n <= cap(d.sampleBuffer) {
+		return
+	}
+	unread := d.unreadSamples()
+	copy(d.sampleBuffer[:unread], d.sampleBuffer[d.sampleOffset:])
+	d.sampleBuffer = d.sampleBuffer[:unread]
+	d.sampleOffset = 0
 }
 
 // SampleRate returns the audio sample rate in Hz.

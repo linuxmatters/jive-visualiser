@@ -48,8 +48,7 @@ type pass2Runner struct {
 	barHeights        []float64
 	rearrangedHeights []float64
 
-	previewImgs [2]*image.RGBA
-	previewIdx  int
+	lastPreviewUpdate time.Time
 
 	sensitivity     float64
 	samplesPerFrame int
@@ -70,36 +69,45 @@ func newPass2Runner(p *tea.Program, profile *audio.Profile, cfg pass2Config) *pa
 	}
 }
 
+const previewUpdateInterval = 100 * time.Millisecond
+
 func (r *pass2Runner) fail(err error) {
 	r.p.Send(ui.RenderComplete{Err: err, AssetWarnings: r.warnings})
 }
 
 func (r *pass2Runner) sendProgressIfDue(frameNum int, img *image.RGBA, interval time.Duration) {
-	if !r.progressDue(interval) {
+	now := time.Now()
+	if !r.progressDue(now, interval) {
 		return
 	}
 
-	r.lastProgressUpdate = time.Now()
-	elapsed := time.Since(r.renderStartTime)
-	r.p.Send(r.renderProgressMessage(frameNum, img, elapsed, r.currentOutputFileSize()))
+	r.lastProgressUpdate = now
+	elapsed := now.Sub(r.renderStartTime)
+	preview, previewFrame := r.previewPayloadIfDue(frameNum, img, now, previewUpdateInterval)
+	r.p.Send(r.renderProgressMessage(frameNum, preview, previewFrame, elapsed, r.currentOutputFileSize()))
 }
 
-func (r *pass2Runner) progressDue(interval time.Duration) bool {
-	return time.Since(r.lastProgressUpdate) >= interval
+func (r *pass2Runner) progressDue(now time.Time, interval time.Duration) bool {
+	return now.Sub(r.lastProgressUpdate) >= interval
 }
 
-func (r *pass2Runner) renderProgressMessage(frameNum int, img *image.RGBA, elapsed time.Duration, fileSize int64) ui.RenderProgress {
+func (r *pass2Runner) previewDue(now time.Time, interval time.Duration) bool {
+	return now.Sub(r.lastPreviewUpdate) >= interval
+}
+
+func (r *pass2Runner) renderProgressMessage(frameNum int, preview string, previewFrame int, elapsed time.Duration, fileSize int64) ui.RenderProgress {
 	return ui.RenderProgress{
-		Frame:       frameNum + 1,
-		TotalFrames: r.numFrames,
-		Elapsed:     elapsed,
-		BarHeights:  append([]float64(nil), r.rearrangedHeights...),
-		FileSize:    fileSize,
-		Sensitivity: r.sensitivity,
-		FrameData:   r.copyPreviewFrame(img),
-		VideoCodec:  fmt.Sprintf("H.264 %d×%d", config.Width, config.Height),
-		AudioCodec:  r.audioCodecInfo,
-		EncoderName: r.enc.EncoderName(),
+		Frame:        frameNum + 1,
+		TotalFrames:  r.numFrames,
+		Elapsed:      elapsed,
+		BarHeights:   append([]float64(nil), r.rearrangedHeights...),
+		FileSize:     fileSize,
+		Sensitivity:  r.sensitivity,
+		Preview:      preview,
+		PreviewFrame: previewFrame,
+		VideoCodec:   fmt.Sprintf("H.264 %d×%d", config.Width, config.Height),
+		AudioCodec:   r.audioCodecInfo,
+		EncoderName:  r.enc.EncoderName(),
 	}
 }
 
@@ -109,17 +117,6 @@ func (r *pass2Runner) currentOutputFileSize() int64 {
 		return 0
 	}
 	return fileInfo.Size()
-}
-
-func (r *pass2Runner) copyPreviewFrame(img *image.RGBA) *image.RGBA {
-	if r.cfg.noPreview {
-		return nil
-	}
-
-	previewImg := r.previewImgs[r.previewIdx]
-	copy(previewImg.Pix, img.Pix)
-	r.previewIdx ^= 1
-	return previewImg
 }
 
 func (r *pass2Runner) closeEncoder() error {
@@ -215,6 +212,7 @@ func (r *pass2Runner) setupProcessorAndFrame() error {
 func (r *pass2Runner) setupTimingAndDisplay() {
 	r.renderStartTime = time.Now()
 	r.lastProgressUpdate = r.renderStartTime
+	r.lastPreviewUpdate = r.renderStartTime
 
 	audioSampleRate := r.reader.SampleRate()
 	audioChannelStr := "mono"
@@ -243,12 +241,14 @@ func (r *pass2Runner) setupRenderState() {
 	r.rearrangedHeights = make([]float64, config.NumBars)
 }
 
-func (r *pass2Runner) setupPreviewBuffers() {
-	if r.cfg.noPreview {
-		return
+func (r *pass2Runner) previewPayloadIfDue(frameNum int, img *image.RGBA, now time.Time, interval time.Duration) (string, int) {
+	if r.cfg.noPreview || img == nil || !r.previewDue(now, interval) {
+		return "", 0
 	}
-	r.previewImgs[0] = image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
-	r.previewImgs[1] = image.NewRGBA(image.Rect(0, 0, config.Width, config.Height))
+
+	preview := ui.DownsampleFrame(img, ui.DefaultPreviewConfig())
+	r.lastPreviewUpdate = now
+	return ui.RenderPreview(preview), frameNum + 1
 }
 
 func (r *pass2Runner) setupAudioBuffers() {

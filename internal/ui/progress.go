@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"image"
 	"math"
 	"strings"
 	"time"
@@ -48,16 +47,17 @@ type AnalysisComplete struct {
 
 // RenderProgress represents progress updates from Pass 2 video rendering
 type RenderProgress struct {
-	Frame       int
-	TotalFrames int
-	Elapsed     time.Duration
-	BarHeights  []float64
-	FileSize    int64
-	Sensitivity float64
-	FrameData   *image.RGBA
-	VideoCodec  string
-	AudioCodec  string
-	EncoderName string
+	Frame        int
+	TotalFrames  int
+	Elapsed      time.Duration
+	BarHeights   []float64
+	FileSize     int64
+	Sensitivity  float64
+	Preview      string
+	PreviewFrame int
+	VideoCodec   string
+	AudioCodec   string
+	EncoderName  string
 }
 
 // RenderComplete signals completion of Pass 2
@@ -718,11 +718,9 @@ func renderLivePreviewBlock(
 	if noPreview {
 		return "", cachedPreview, cachedFrameNum
 	}
-	if state.FrameData != nil && state.Frame != cachedFrameNum {
-		config := DefaultPreviewConfig()
-		preview := DownsampleFrame(state.FrameData, config)
-		cachedPreview = RenderPreview(preview)
-		cachedFrameNum = state.Frame
+	if state.Preview != "" && state.PreviewFrame != cachedFrameNum {
+		cachedPreview = state.Preview
+		cachedFrameNum = state.PreviewFrame
 	}
 	return cachedPreview, cachedPreview, cachedFrameNum
 }

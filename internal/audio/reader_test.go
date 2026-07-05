@@ -230,3 +230,30 @@ func TestStreamingReaderMultipleReads(t *testing.T) {
 
 	t.Logf("Multiple reads consistent: %d samples verified", compareCount)
 }
+
+func BenchmarkStreamingReaderReadInto(b *testing.B) {
+	buf := make([]float64, 2048)
+
+	b.ReportAllocs()
+	for range b.N {
+		reader, err := NewStreamingReader("../../testdata/LMP0.mp3")
+		if err != nil {
+			b.Fatalf("Failed to create streaming reader: %v", err)
+		}
+
+		for {
+			_, err := reader.ReadInto(buf)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				reader.Close()
+				b.Fatalf("Failed to read samples: %v", err)
+			}
+		}
+
+		if err := reader.Close(); err != nil {
+			b.Fatalf("Failed to close reader: %v", err)
+		}
+	}
+}
