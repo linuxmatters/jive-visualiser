@@ -71,13 +71,13 @@ func TestSpectrumSpringsInterpolate(t *testing.T) {
 	}
 	m.Update(RenderProgress{Frame: 1, TotalFrames: 100, BarHeights: target})
 
-	if got := m.spectrumPos[0]; got != 0 {
+	if got := m.spectrum.positions[0]; got != 0 {
 		t.Fatalf("RenderProgress advanced a spring (pos=%v); the producer must only set the target", got)
 	}
 
 	// One tick: positions move off zero but stay short of the target (no snap).
 	m.Update(tickMsg{})
-	afterOne := m.spectrumPos[0]
+	afterOne := m.spectrum.positions[0]
 	if afterOne <= 0 {
 		t.Fatalf("spring did not move toward target after one tick, pos=%v", afterOne)
 	}
@@ -87,7 +87,7 @@ func TestSpectrumSpringsInterpolate(t *testing.T) {
 
 	// Further ticks keep approaching the target monotonically over this range.
 	m.Update(tickMsg{})
-	afterTwo := m.spectrumPos[0]
+	afterTwo := m.spectrum.positions[0]
 	if afterTwo <= afterOne {
 		t.Fatalf("spring did not continue toward target: tick1=%v tick2=%v", afterOne, afterTwo)
 	}

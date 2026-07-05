@@ -2,7 +2,10 @@ package encoder
 
 import (
 	"os"
+	"reflect"
 	"testing"
+
+	ffmpeg "github.com/linuxmatters/ffmpeg-statigo"
 )
 
 // newTestFIFO allocates an avAudioFIFO for the given channel count with the AAC
@@ -253,6 +256,215 @@ func TestAVAudioFIFO_SequentialOperations(t *testing.T) {
 			t.Errorf("round %d: after draining, size() = %d, want 0", round, got)
 		}
 	}
+}
+
+func TestHWEncoderOptionsFollowRegistryPolicy(t *testing.T) {
+	tests := map[HWAccelType][]hwEncoderOption{
+		HWAccelNVENC: {
+			{"preset", "p1"},
+			{"tune", "ull"},
+			{"rc", "vbr"},
+			{"cq", "24"},
+			{"profile", "main"},
+			{"bf", "0"},
+			{"zerolatency", "1"},
+		},
+		HWAccelQSV: {
+			{"preset", "medium"},
+			{"global_quality", "24"},
+			{"profile", "main"},
+		},
+		HWAccelVAAPI: {
+			{"qp", "24"},
+			{"profile", "main"},
+			{"bf", "0"},
+		},
+		HWAccelVulkan: {
+			{"content", "rendered"},
+			{"qp", "24"},
+			{"tune", "ull"},
+			{"async_depth", "4"},
+			{"profile", "main"},
+			{"b_depth", "1"},
+		},
+		HWAccelVideoToolbox: {
+			{"profile", "main"},
+			{"level", "4.1"},
+			{"realtime", "1"},
+			{"allow_sw", "0"},
+		},
+	}
+
+	for accelType, want := range tests {
+		entry, ok := hwEncoderRegistryEntryForType(accelType)
+		if !ok {
+			t.Fatalf("registry entry missing for %q", accelType)
+		}
+		got := hwEncoderOptions(entry.optionPolicy)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%q options = %#v, want %#v", accelType, got, want)
+		}
+	}
+}
+
+func TestInputPixelFormatFollowsRegistryRuntimeFormat(t *testing.T) {
+	tests := map[HWAccelType]ffmpeg.AVPixelFormat{
+		HWAccelNone:         ffmpeg.AVPixFmtYuv420P,
+		HWAccelNVENC:        ffmpeg.AVPixFmtRgba,
+		HWAccelQSV:          ffmpeg.AVPixFmtNv12,
+		HWAccelVAAPI:        ffmpeg.AVPixFmtNv12,
+		HWAccelVulkan:       ffmpeg.AVPixFmtNv12,
+		HWAccelVideoToolbox: ffmpeg.AVPixFmtNv12,
+	}
+
+	for accelType, want := range tests {
+		entry, ok := hwEncoderRegistryEntryForType(accelType)
+		if !ok {
+			t.Fatalf("registry entry missing for %q", accelType)
+		}
+		got := inputPixelFormatForRegistryEntry(entry)
+		if got != want {
+			t.Fatalf("%q input pixel format = %v, want %v", accelType, got, want)
+		}
+	}
+}
+
+func TestEncoderCloseIsDoubleCloseSafe(t *testing.T) {
+	outputPath := t.TempDir() + "/double-close.mp4"
+	config := Config{
+		OutputPath: outputPath,
+		Width:      64,
+		Height:     64,
+		Framerate:  30,
+		HWAccel:    HWAccelNone,
+	}
+
+	enc, err := New(config)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	if err := enc.Initialize(); err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+
+	frame := make([]byte, config.Width*config.Height*4)
+	for i := 3; i < len(frame); i += 4 {
+		frame[i] = 255
+	}
+	if err := enc.WriteFrameRGBA(frame); err != nil {
+		t.Fatalf("WriteFrameRGBA() failed: %v", err)
+	}
+
+	if err := enc.Close(); err != nil {
+		t.Fatalf("first Close() failed: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("second Close() failed: %v", err)
+	}
+}
+
+func TestEncoderFlushAudioEncoderWritesPartialFrame(t *testing.T) {
+	outputPath := t.TempDir() + "/audio-flush.mp4"
+	config := Config{
+		OutputPath:    outputPath,
+		Width:         64,
+		Height:        64,
+		Framerate:     30,
+		SampleRate:    48000,
+		AudioChannels: 2,
+		HWAccel:       HWAccelNone,
+	}
+
+	enc, err := New(config)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if err := enc.Initialize(); err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+
+	frame := makeOpaqueRGBAFrame(config.Width, config.Height, 0x20, 0x40, 0x80)
+	if err := enc.WriteFrameRGBA(frame); err != nil {
+		t.Fatalf("WriteFrameRGBA() failed: %v", err)
+	}
+
+	const samplesPerChannel = 300
+	samples := make([]float32, samplesPerChannel*config.AudioChannels)
+	for i := range samplesPerChannel {
+		samples[i*2] = 0.25
+		samples[i*2+1] = -0.25
+	}
+	if err := enc.WriteAudioSamples(samples); err != nil {
+		t.Fatalf("WriteAudioSamples() failed: %v", err)
+	}
+	if got := fifoSize(t, enc.audio.fifo); got != samplesPerChannel {
+		t.Fatalf("audio FIFO size before flush = %d, want %d", got, samplesPerChannel)
+	}
+
+	if err := enc.FlushAudioEncoder(); err != nil {
+		t.Fatalf("FlushAudioEncoder() failed: %v", err)
+	}
+	if got := fifoSize(t, enc.audio.fifo); got != 0 {
+		t.Fatalf("audio FIFO size after flush = %d, want 0", got)
+	}
+
+	if err := enc.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("output file not created: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatal("output file is empty")
+	}
+}
+
+func TestEncoderUnknownHardwareFallsBackToSoftwareMetadata(t *testing.T) {
+	outputPath := t.TempDir() + "/unknown-hardware-fallback.mp4"
+	config := Config{
+		OutputPath: outputPath,
+		Width:      64,
+		Height:     64,
+		Framerate:  30,
+		HWAccel:    HWAccelType("unknown"),
+	}
+
+	enc, err := New(config)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if err := enc.Initialize(); err != nil {
+		t.Fatalf("Initialize() failed: %v", err)
+	}
+	defer enc.Close()
+
+	if got := enc.EncoderName(); got != "libx264" {
+		t.Fatalf("EncoderName() = %q, want %q", got, "libx264")
+	}
+	if enc.IsHardware() {
+		t.Fatal("IsHardware() = true, want false")
+	}
+
+	if err := enc.WriteFrameRGBA(makeOpaqueRGBAFrame(config.Width, config.Height, 0, 0, 0)); err != nil {
+		t.Fatalf("WriteFrameRGBA() failed: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+}
+
+func makeOpaqueRGBAFrame(width, height int, red, green, blue byte) []byte {
+	frame := make([]byte, width*height*4)
+	for i := 0; i < len(frame); i += 4 {
+		frame[i] = red
+		frame[i+1] = green
+		frame[i+2] = blue
+		frame[i+3] = 255
+	}
+	return frame
 }
 
 // TestEncoderPOC is a proof-of-concept test that encodes a single black frame via RGBA path

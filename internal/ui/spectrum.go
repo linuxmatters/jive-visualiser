@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/harmonica"
 	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
 
@@ -30,21 +31,38 @@ const spectrumColourGamma = 0.5
 // one tick equals one spring step.
 var spectrumSpringDelta = uiTickInterval.Seconds()
 
-// advanceSpectrumSprings steps every spectrum spring one tick toward the latest
-// producer-owned target (m.renderState.BarHeights), storing the new positions
-// and velocities back into the Model. Called only from the tickMsg case so the
-// tick is the single owner of spring state. Bars without a corresponding target
-// (BarHeights shorter than the spring count, or empty before the first
-// RenderProgress) ease toward zero.
-func (m *Model) advanceSpectrumSprings() {
-	targets := m.renderState.BarHeights
-	for i := range m.spectrumSprings {
+// spectrumState owns one spring per displayed bar, plus parallel position and
+// velocity slices. It starts at rest at zero, so the first targets ease in.
+type spectrumState struct {
+	springs    []harmonica.Spring
+	positions  []float64
+	velocities []float64
+}
+
+func newSpectrumState(barCount int) spectrumState {
+	springs := make([]harmonica.Spring, barCount)
+	for i := range springs {
+		springs[i] = harmonica.NewSpring(spectrumSpringDelta, spectrumSpringFreq, spectrumSpringDamping)
+	}
+
+	return spectrumState{
+		springs:    springs,
+		positions:  make([]float64, barCount),
+		velocities: make([]float64, barCount),
+	}
+}
+
+// advance steps every spring one tick toward the latest producer-owned target.
+// Called only from tickMsg, so the tick is the single owner of spring state.
+// Bars without a corresponding target ease toward zero.
+func (s *spectrumState) advance(targets []float64) {
+	for i := range s.springs {
 		var target float64
 		if i < len(targets) {
 			target = targets[i]
 		}
-		m.spectrumPos[i], m.spectrumVel[i] = m.spectrumSprings[i].Update(
-			m.spectrumPos[i], m.spectrumVel[i], target)
+		s.positions[i], s.velocities[i] = s.springs[i].Update(
+			s.positions[i], s.velocities[i], target)
 	}
 }
 

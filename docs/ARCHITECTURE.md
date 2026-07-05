@@ -65,7 +65,7 @@ Colourspace Conversion (path depends on encoder)
     │
     ├─ [Software] RGBA → YUV420P (Pure Go, parallelised)
     │   ├─ Direct conversion skips intermediate RGB24 buffer
-    │   ├─ Parallel row processing via internal/yuv.ParallelRows
+    │   ├─ Parallel row processing via internal/yuv.RowPool
     │   └─ ITU-R BT.601 coefficients from internal/yuv
     │
     └─ [Hardware] RGBA → NV12 (Pure Go, parallelised)
@@ -92,7 +92,7 @@ MP4 Muxer (libavformat)
 ## Key Technical Choices
 
 ### Audio Frame Size Mismatch
-FFT analysis requires 2048 samples for frequency resolution, but AAC encoder expects 1024 samples per frame. **Solution:** `AudioFIFO` in `encoder/encoder.go` buffers incoming audio samples and drains them in encoder-sized frames, decoupling the FFT chunk size from the AAC frame size.
+FFT analysis requires 2048 samples for frequency resolution, but AAC encoder expects 1024 samples per frame. **Solution:** `AVAudioFifo` in `encoder/audio_encoder.go` buffers incoming audio samples and drains them in encoder-sized frames, decoupling the FFT chunk size from the AAC frame size.
 
 ### Hardware-Accelerated Encoding
 Automatic GPU encoder detection in `encoder/hwaccel.go`:
@@ -101,6 +101,8 @@ Automatic GPU encoder detection in `encoder/hwaccel.go`:
 - **VideoToolbox** (macOS): Apple Silicon and Intel Mac hardware encoding
 - **Software fallback**: Optimised libx264 with `veryfast` preset when no GPU available
 
+The hardware encoder registry stores probe, priority, pixel-format, and option metadata in one place. `--encoder` still accepts only `auto`, `nvenc`, `qsv`, `vaapi`, `vulkan`, and `software`. VideoToolbox remains available for macOS auto-selection and probe output, not as an explicit CLI value.
+
 **Why RGBA for hardware encoders?** Initial implementation used CPU-side RGB→YUV conversion for all encoders. Benchmarking showed hardware encoders were bottlenecked by CPU conversion overhead. Hardware encoders accept NV12 (semi-planar YUV) natively, so we convert RGBA→NV12 on CPU and let the GPU handle encoding only—avoiding the RGB→YUV→NV12 double conversion that would occur if we sent YUV420P.
 
 ### Colourspace Conversion
@@ -108,10 +110,10 @@ Hot-path converters in `encoder/frame.go` (`convertRGBAToYUV`, `convertRGBAToNV1
 - **RGBA→YUV420P** (software encoder): Direct conversion skips intermediate RGB24 buffer allocation
 - **RGBA→NV12** (hardware encoders): Semi-planar format for GPU upload
 
-Both call shared BT.601 coefficient helpers and `ParallelRows` from `internal/yuv`. The two functions are kept deliberately separate despite near-identical structure — the hot-path duplication avoids a callback/interface indirection that would hurt throughput.
+Both call shared BT.601 coefficient helpers and `RowPool` from `internal/yuv`. The two functions stay separate because a callback or interface would slow the per-pixel loop.
 
 All converters share common characteristics:
-- Parallel row processing across CPU cores via `internal/yuv.ParallelRows`
+- Parallel row processing across CPU cores via `internal/yuv.RowPool`
 - Even/odd row separation eliminates per-pixel conditionals in inner loops
 - ITU-R BT.601 coefficients with fixed-point integer arithmetic (no floating-point in hot path)
 
@@ -140,16 +142,19 @@ Preview renders via Unicode blocks (`▁▂▃▄▅▆▇█`) using actual bar
 ## File Structure
 
 ```
-cmd/jive-visualiser/main.go  → CLI entry, 2-pass coordinator
+cmd/jive-visualiser/main.go  → CLI entry and Pass 1 coordinator
+cmd/jive-visualiser/pass2.go → Pass 2 rendering and encoding runner
 internal/audio/              → StreamingReader (chunk-based FFmpeg decode), FFT analysis
-internal/encoder/            → ffmpeg-statigo wrapper, RGB→YUV conversion, FIFO buffer
-  ├─ encoder.go              → Video/audio encoding, frame submission
-  ├─ hwaccel.go              → Hardware encoder detection (NVENC, QSV, VA-API, Vulkan, VideoToolbox)
+internal/encoder/            → ffmpeg-statigo muxer facade, RGB→YUV conversion, FIFO buffer
+  ├─ encoder.go              → Public encoder API and MP4 muxer ownership
+  ├─ audio_encoder.go        → AAC setup, FIFO writes, flush, and audio packets
+  ├─ video_encoder.go        → H.264 setup, hardware context, frames, and video packets
+  ├─ hwaccel.go              → Hardware encoder registry, detection, and selection
   └─ frame.go                → RGBA→YUV420P / RGBA→NV12 parallelised conversion
 internal/renderer/           → Frame generation, bar drawing, thumbnail
-internal/ui/                 → Bubbletea TUI (unified progress.go for both passes)
+internal/ui/                 → Bubbletea TUI state, spectrum, preview, and summary views
 internal/config/             → Constants (dimensions, FFT params, colours)
-internal/yuv/                → Shared BT.601 coefficient helpers and ParallelRows
+internal/yuv/                → Shared BT.601 coefficient helpers, ParallelRows, and RowPool
 internal/theme/              → Terminal colour theme
 internal/cli/                → Kong CLI helpers and styled help
 third_party/ffmpeg-statigo/  → Git submodule: FFmpeg 8.0 static bindings
@@ -160,9 +165,9 @@ third_party/ffmpeg-statigo/  → Git submodule: FFmpeg 8.0 static bindings
 ## Future-Proofing
 
 ### go-yuv: Parallelised Colourspace Conversion
-BT.601 coefficient helpers and `ParallelRows` have been extracted into `internal/yuv`. The hot-path converters (`convertRGBAToYUV`, `convertRGBAToNV12`) in `encoder/frame.go` call these shared primitives. The `internal/yuv` package is a strong candidate for further extraction as a standalone Go module:
+BT.601 coefficient helpers, `ParallelRows`, and `RowPool` have been extracted into `internal/yuv`. The hot-path converters (`convertRGBAToYUV`, `convertRGBAToNV12`) in `encoder/frame.go` call these shared primitives. The `internal/yuv` package is a strong candidate for further extraction as a standalone Go module:
 - Multiple format conversions: RGBA→YUV420P, RGBA→NV12
-- Goroutine-based parallelisation across CPU cores via `ParallelRows`
+- Goroutine-based parallelisation across CPU cores via `ParallelRows` or `RowPool`
 - Pure Go with no CGO dependencies (coefficients only, no FFmpeg)
 
 There's currently no pure Go library offering parallelised colourspace conversion. Existing options are either single-threaded (stdlib `color.RGBToYCbCr`) or require CGO FFmpeg bindings. A standalone `go-yuv` module would benefit:

@@ -13,7 +13,6 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/harmonica"
 	"github.com/linuxmatters/jive-visualiser/internal/config"
 	"github.com/linuxmatters/jive-visualiser/internal/theme"
 )
@@ -158,13 +157,10 @@ type Model struct {
 	renderState RenderProgress
 	complete    *RenderComplete
 
-	// Spectrum smoothing: one spring per displayed bar with parallel position
-	// and velocity slices. The tick is the sole owner that advances these toward
-	// the producer-owned target m.renderState.BarHeights; renderSpectrum reads
-	// the positions but never allocates or steps the springs.
-	spectrumSprings []harmonica.Spring
-	spectrumPos     []float64
-	spectrumVel     []float64
+	// Spectrum smoothing. The tick is the sole owner that advances this toward
+	// the producer-owned BarHeights; renderSpectrum reads positions but never
+	// allocates or steps springs.
+	spectrum spectrumState
 
 	// speedHistory is a bounded trace of recent realtime-speed samples, appended
 	// once per RenderProgress update and drawn as the Speed card's sparkline.
@@ -276,14 +272,6 @@ func NewModel(noPreview bool) *Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(midGrey)
 
-	// One spring per displayed bar (config.NumBars == 64). Springs share the same
-	// coefficients; positions and velocities are per-bar. Initialised at rest at
-	// zero so the first targets ease in rather than snapping.
-	springs := make([]harmonica.Spring, config.NumBars)
-	for i := range springs {
-		springs[i] = harmonica.NewSpring(spectrumSpringDelta, spectrumSpringFreq, spectrumSpringDamping)
-	}
-
 	return &Model{
 		progressBar:     p,
 		summaryBar:      summaryBar,
@@ -292,9 +280,7 @@ func NewModel(noPreview bool) *Model {
 		phase:           PhaseAnalysis,
 		completionDelay: 2 * time.Second,
 		noPreview:       noPreview,
-		spectrumSprings: springs,
-		spectrumPos:     make([]float64, config.NumBars),
-		spectrumVel:     make([]float64, config.NumBars),
+		spectrum:        newSpectrumState(config.NumBars),
 	}
 }
 
@@ -372,11 +358,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		// Advance the spectrum springs one step toward the producer-owned target,
 		// then re-issue the tick to keep the repaint clock running. The tick is the
-		// SOLE owner that steps the springs; RenderProgress only updates the target
-		// (m.renderState.BarHeights). This avoids a tick-vs-p.Send double-update
-		// race. This clock is distinct from spinner.TickMsg; never re-issue one
+		// sole owner that steps the springs; RenderProgress only updates the
+		// target. This clock is distinct from spinner.TickMsg; never re-issue one
 		// from the other.
-		m.advanceSpectrumSprings()
+		m.spectrum.advance(m.renderState.BarHeights)
 		return m, tickCmd()
 
 	case spinner.TickMsg:
@@ -415,7 +400,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) View() tea.View {
 	var content string
 	if m.phase == PhaseComplete {
-		content = m.renderFinalProgress() + "\n" + m.renderComplete()
+		content = m.renderCompletionView()
 	} else {
 		content = m.renderProgress()
 	}
@@ -433,7 +418,7 @@ func (m *Model) CompletionSummary() string {
 	if m.complete == nil || m.complete.Err != nil {
 		return ""
 	}
-	return m.renderFinalProgress() + "\n" + m.renderComplete()
+	return m.renderCompletionView()
 }
 
 // RenderError returns the fatal error delivered with the RenderComplete
@@ -454,6 +439,10 @@ func (m *Model) AssetWarnings() []string {
 	return m.complete.AssetWarnings
 }
 
+func (m *Model) renderCompletionView() string {
+	return m.renderFinalProgress() + "\n" + m.renderComplete()
+}
+
 // renderFinalProgress renders the progress UI in its final completed state
 func (m *Model) renderFinalProgress() string {
 	var s strings.Builder
@@ -471,32 +460,10 @@ func (m *Model) renderFinalProgress() string {
 	writeProgressRow(&s, m.progressBar.ViewAs(1.0), 100)
 	s.WriteString("\n\n")
 
-	// Final timing, the finished mirror of the live Pass 2 gauge cards. Time is
-	// the total time taken; Speed is the final realtime ratio (no live sparkline);
-	// Size is the final file size; the live ETA card is repurposed as a Duration
-	// card showing the source audio length, with the 🎜 glyph in vivid red.
-	videoDuration := time.Duration(m.complete.TotalFrames) * time.Second / config.FPS
-	var finalSpeed float64
-	if m.complete.TotalTime > 0 {
-		finalSpeed = float64(videoDuration) / float64(m.complete.TotalTime)
-	}
-	var sourceDuration time.Duration
-	if m.audioProfile != nil {
-		sourceDuration = m.audioProfile.Duration
-	}
-
-	timeCard := gaugeCard("⏱", lipgloss.Color("#FFFFFF"), "Time", formatDuration(m.complete.TotalTime), finalCardWidth)
-	speedCard := gaugeCard("⚡", theme.WarmGray, "Speed", fmt.Sprintf("%.1f×", finalSpeed), finalCardWidth)
-	sizeCard := gaugeCard("🖬", lipgloss.Color("#FF8C00"), "Size", formatSizeGlyph(m.complete.FileSize), finalCardWidth)
-	durationCard := gaugeCard("🎜", lipgloss.Color("#FF2D2D"), "Duration", formatDuration(sourceDuration), finalCardWidth)
-
-	cardsRow := lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", sizeCard, " ", durationCard)
+	stats := finalProgressStatsFromComplete(*m.complete, m.audioProfile)
+	cardsRow := renderFinalProgressCards(stats)
 	s.WriteString(cardsRow)
 
-	// Frame line in finished form: a static mid-grey check leads "Frame: N / N"
-	// (no animated spinner, which would freeze as a glitch in the post-exit static
-	// print). The codec info matches the live line exactly, right-aligned to the
-	// cards-row width.
 	s.WriteString("\n")
 	m.writeFinalFrameLine(&s, lipgloss.Width(cardsRow))
 
@@ -506,6 +473,38 @@ func (m *Model) renderFinalProgress() string {
 		Padding(1, 2).
 		Width(m.boxContentWidth()).
 		Render(s.String())
+}
+
+type finalProgressStats struct {
+	totalTime      time.Duration
+	sourceDuration time.Duration
+	speed          float64
+	fileSize       int64
+}
+
+func finalProgressStatsFromComplete(complete RenderComplete, profile *AudioProfile) finalProgressStats {
+	videoDuration := time.Duration(complete.TotalFrames) * time.Second / config.FPS
+
+	stats := finalProgressStats{
+		totalTime: complete.TotalTime,
+		fileSize:  complete.FileSize,
+	}
+	if complete.TotalTime > 0 {
+		stats.speed = float64(videoDuration) / float64(complete.TotalTime)
+	}
+	if profile != nil {
+		stats.sourceDuration = profile.Duration
+	}
+	return stats
+}
+
+func renderFinalProgressCards(stats finalProgressStats) string {
+	timeCard := gaugeCard("⏱", lipgloss.Color("#FFFFFF"), "Time", formatDuration(stats.totalTime), finalCardWidth)
+	speedCard := gaugeCard("⚡", theme.WarmGray, "Speed", fmt.Sprintf("%.1f×", stats.speed), finalCardWidth)
+	sizeCard := gaugeCard("🖬", lipgloss.Color("#FF8C00"), "Size", formatSizeGlyph(stats.fileSize), finalCardWidth)
+	durationCard := gaugeCard("🎜", lipgloss.Color("#FF2D2D"), "Duration", formatDuration(stats.sourceDuration), finalCardWidth)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", sizeCard, " ", durationCard)
 }
 
 func (m *Model) renderProgress() string {
@@ -597,46 +596,14 @@ func (m *Model) renderRenderingProgress(s *strings.Builder) {
 	writeProgressRow(s, m.progressBar.View(), int(percent*100))
 	s.WriteString("\n\n")
 
-	// Timing information. Derive elapsed from wall-clock at render time so the
-	// ~60ms UI tick advances it (and the ETA/speed derived from it) between
-	// p.Send data updates, rather than freezing on the stale message field.
-	// Fall back to the message field only if pass2StartTime is unset.
-	elapsed := time.Since(m.pass2StartTime)
-	if m.pass2StartTime.IsZero() {
-		elapsed = m.renderState.Elapsed
-	}
-
-	var estimatedTotal, eta time.Duration
-	var speed float64
-
-	if percent > 0 {
-		estimatedTotal = time.Duration(float64(elapsed) / percent)
-		eta = estimatedTotal - elapsed
-
-		videoEncodedSoFar := time.Duration(m.renderState.Frame) * time.Second / config.FPS
-		if elapsed > 0 {
-			speed = float64(videoEncodedSoFar) / float64(elapsed)
-		}
-	}
-
-	// Four stat gauge cards joined horizontally: Time, Speed (with a live
-	// sparkline of recent speed samples), Size (live output file size) and ETA.
-	// The card inner widths are chosen so the joined row plus its three
-	// separators fits the 74-cell box content area without wrapping.
-	timeCard := gaugeCard("⏱", lipgloss.Color("#FFFFFF"), "Time", fmt.Sprintf("%s / %s",
-		formatClock(elapsed), formatClock(estimatedTotal)), 13)
-	speedValue := fmt.Sprintf("%.1f× %s", speed, sparkline(m.speedHistory))
-	speedCard := gaugeCard("⚡", theme.WarmGray, "Speed", speedValue, 12)
-	sizeCard := gaugeCard("🖬", lipgloss.Color("#FF8C00"), "Size", formatSizeGlyph(m.renderState.FileSize), 11)
-	etaCard := gaugeCard("🞋", lipgloss.Color("#FF2D2D"), "ETA", formatClock(eta), 10)
-
-	cardsRow := lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", sizeCard, " ", etaCard)
+	stats := liveRenderStatsFromProgress(m.renderState, m.pass2StartTime)
+	cardsRow := renderLivePass2Cards(stats, m.speedHistory, m.renderState.FileSize)
 	s.WriteString(cardsRow)
 
 	// Frame counter and a compact source/codec/size summary on one line, below the
 	// gauge cards. The codec info is right-aligned to end under the cards row.
 	s.WriteString("\n")
-	m.writeFrameSourceLine(s, lipgloss.Width(cardsRow))
+	s.WriteString(renderLiveFrameSourceLine(m.spinner.View(), m.renderState, lipgloss.Width(cardsRow)))
 }
 
 // recordSpeedSample appends the current realtime speed to the bounded history
@@ -665,28 +632,18 @@ func (m *Model) recordSpeedSample(msg RenderProgress) {
 func (m *Model) renderSpectrumAndStats(s *strings.Builder) {
 	s.WriteString("\n")
 
-	// Size the spectrum to the preview box's rendered width so its left edge and
-	// width line up with the preview below. renderSpectrum upsamples the 64 bars
-	// across the wider column count. Draw the spring positions, not the raw target
-	// heights, so bars ease toward new BarHeights over successive ticks. The
-	// springs are advanced only in the tickMsg case; renderSpectrum stays pure
-	// over its inputs.
-	spectrum := renderSpectrum(m.spectrumPos, m.spectrumWidth())
-	s.WriteString(spectrum)
+	s.WriteString(renderLiveSpectrumBlock(m.spectrum.positions, m.spectrumWidth()))
 
-	// Video preview
-	if !m.noPreview {
-		if m.renderState.FrameData != nil && m.renderState.Frame != m.cachedFrameNum {
-			config := DefaultPreviewConfig()
-			preview := DownsampleFrame(m.renderState.FrameData, config)
-			m.cachedPreview = RenderPreview(preview)
-			m.cachedFrameNum = m.renderState.Frame
-		}
-
-		if m.cachedPreview != "" {
-			s.WriteString("\n")
-			s.WriteString(m.cachedPreview)
-		}
+	var preview string
+	preview, m.cachedPreview, m.cachedFrameNum = renderLivePreviewBlock(
+		m.noPreview,
+		m.renderState,
+		m.cachedPreview,
+		m.cachedFrameNum,
+	)
+	if preview != "" {
+		s.WriteString("\n")
+		s.WriteString(preview)
 	}
 }
 
@@ -701,23 +658,91 @@ func (m *Model) spectrumWidth() int {
 	return max(m.boxContentWidth()-6, 10)
 }
 
-// writeFrameSourceLine writes the "<spinner> Frame X / Y … video · audio" line.
-// The animated spinner (mid grey) leads the frame counter on the left; the codec
-// info (video codec with the live encoder name in mid-grey brackets, then the
-// audio codec) is right-aligned so its last character ends at rowWidth, the gauge
-// cards row width. The output file size lives in the Size gauge card; the source
-// duration is omitted. The codec summary is dropped until any codec data arrives.
-func (m *Model) writeFrameSourceLine(s *strings.Builder, rowWidth int) {
+type liveRenderStats struct {
+	elapsed        time.Duration
+	estimatedTotal time.Duration
+	eta            time.Duration
+	speed          float64
+}
+
+func liveRenderStatsFromProgress(state RenderProgress, pass2StartTime time.Time) liveRenderStats {
+	// Derive elapsed from wall-clock at render time so the ~60ms UI tick advances
+	// Time, ETA and Speed between p.Send data updates. Fall back to the message
+	// field only if pass2StartTime is unset.
+	elapsed := time.Since(pass2StartTime)
+	if pass2StartTime.IsZero() {
+		elapsed = state.Elapsed
+	}
+
+	stats := liveRenderStats{elapsed: elapsed}
+	if state.TotalFrames == 0 || state.Frame == 0 {
+		return stats
+	}
+
+	percent := float64(state.Frame) / float64(state.TotalFrames)
+	stats.estimatedTotal = time.Duration(float64(elapsed) / percent)
+	stats.eta = stats.estimatedTotal - elapsed
+
+	videoEncodedSoFar := time.Duration(state.Frame) * time.Second / config.FPS
+	if elapsed > 0 {
+		stats.speed = float64(videoEncodedSoFar) / float64(elapsed)
+	}
+	return stats
+}
+
+func renderLivePass2Cards(stats liveRenderStats, speedHistory []float64, fileSize int64) string {
+	// The card inner widths are chosen so the joined row plus its three separators
+	// fits the 74-cell box content area without wrapping.
+	timeCard := gaugeCard("⏱", lipgloss.Color("#FFFFFF"), "Time", fmt.Sprintf("%s / %s",
+		formatClock(stats.elapsed), formatClock(stats.estimatedTotal)), 13)
+	speedValue := fmt.Sprintf("%.1f× %s", stats.speed, sparkline(speedHistory))
+	speedCard := gaugeCard("⚡", theme.WarmGray, "Speed", speedValue, 12)
+	sizeCard := gaugeCard("🖬", lipgloss.Color("#FF8C00"), "Size", formatSizeGlyph(fileSize), 11)
+	etaCard := gaugeCard("🞋", lipgloss.Color("#FF2D2D"), "ETA", formatClock(stats.eta), 10)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, timeCard, " ", speedCard, " ", sizeCard, " ", etaCard)
+}
+
+// renderLiveSpectrumBlock sizes the spectrum to the preview box's rendered
+// width, so its left edge and width line up with the preview below.
+func renderLiveSpectrumBlock(positions []float64, width int) string {
+	return renderSpectrum(positions, width)
+}
+
+func renderLivePreviewBlock(
+	noPreview bool,
+	state RenderProgress,
+	cachedPreview string,
+	cachedFrameNum int,
+) (string, string, int) {
+	if noPreview {
+		return "", cachedPreview, cachedFrameNum
+	}
+	if state.FrameData != nil && state.Frame != cachedFrameNum {
+		config := DefaultPreviewConfig()
+		preview := DownsampleFrame(state.FrameData, config)
+		cachedPreview = RenderPreview(preview)
+		cachedFrameNum = state.Frame
+	}
+	return cachedPreview, cachedPreview, cachedFrameNum
+}
+
+// renderLiveFrameSourceLine renders the "<spinner> Frame X / Y … video · audio"
+// line. The output file size lives in the Size gauge card; the source duration is
+// omitted. The codec summary is dropped until any codec data arrives.
+func renderLiveFrameSourceLine(spinnerView string, state RenderProgress, rowWidth int) string {
 	labelStyle := lipgloss.NewStyle().Foreground(theme.WarmGray)
 	valueStyle := lipgloss.NewStyle().Bold(true)
 
 	frame := lipgloss.JoinHorizontal(lipgloss.Top,
-		m.spinner.View(),
+		spinnerView,
 		labelStyle.Render("Frame: "),
-		valueStyle.Render(fmt.Sprintf("%d / %d", m.renderState.Frame, m.renderState.TotalFrames)),
+		valueStyle.Render(fmt.Sprintf("%d / %d", state.Frame, state.TotalFrames)),
 	)
 
-	writeFrameLine(s, frame, m.codecInfo(m.renderState.EncoderName), rowWidth)
+	var s strings.Builder
+	writeFrameLine(&s, frame, renderCodecInfo(state.VideoCodec, state.AudioCodec, state.EncoderName), rowWidth)
+	return s.String()
 }
 
 // writeFinalFrameLine writes the finished Pass 2 frame line: a static mid-grey
@@ -726,6 +751,10 @@ func (m *Model) writeFrameSourceLine(s *strings.Builder, rowWidth int) {
 // info as the live line. The encoder name falls back to the completion record
 // when the live render state has been cleared.
 func (m *Model) writeFinalFrameLine(s *strings.Builder, rowWidth int) {
+	s.WriteString(renderFinalFrameLine(m.renderState, *m.complete, rowWidth))
+}
+
+func renderFinalFrameLine(state RenderProgress, complete RenderComplete, rowWidth int) string {
 	labelStyle := lipgloss.NewStyle().Foreground(theme.WarmGray)
 	valueStyle := lipgloss.NewStyle().Bold(true)
 	checkStyle := lipgloss.NewStyle().Foreground(midGrey)
@@ -733,26 +762,28 @@ func (m *Model) writeFinalFrameLine(s *strings.Builder, rowWidth int) {
 	frame := lipgloss.JoinHorizontal(lipgloss.Top,
 		checkStyle.Render("✓ "),
 		labelStyle.Render("Frame: "),
-		valueStyle.Render(fmt.Sprintf("%d / %d", m.complete.TotalFrames, m.complete.TotalFrames)),
+		valueStyle.Render(fmt.Sprintf("%d / %d", complete.TotalFrames, complete.TotalFrames)),
 	)
 
-	encoder := m.renderState.EncoderName
+	encoder := state.EncoderName
 	if encoder == "" {
-		encoder = m.complete.EncoderName
+		encoder = complete.EncoderName
 	}
-	writeFrameLine(s, frame, m.codecInfo(encoder), rowWidth)
+	var s strings.Builder
+	writeFrameLine(&s, frame, renderCodecInfo(state.VideoCodec, state.AudioCodec, encoder), rowWidth)
+	return s.String()
 }
 
-// codecInfo builds the compact codec summary shared by the live and finished
+// renderCodecInfo builds the compact codec summary shared by the live and finished
 // frame lines: the video codec with the encoder name in mid-grey brackets, then
 // the audio codec, joined with " · ". Returns "" when no codec data is present.
-func (m *Model) codecInfo(encoder string) string {
+func renderCodecInfo(videoCodec, audioCodec, encoder string) string {
 	valueStyle := lipgloss.NewStyle().Bold(true)
 	greyStyle := lipgloss.NewStyle().Foreground(midGrey)
 
 	var codec string
-	if m.renderState.VideoCodec != "" {
-		video := valueStyle.Render(compactCodec(m.renderState.VideoCodec))
+	if videoCodec != "" {
+		video := valueStyle.Render(compactCodec(videoCodec))
 		if encoder != "" {
 			video = lipgloss.JoinHorizontal(lipgloss.Top,
 				video,
@@ -762,8 +793,8 @@ func (m *Model) codecInfo(encoder string) string {
 		}
 		codec = video
 	}
-	if m.renderState.AudioCodec != "" {
-		audio := valueStyle.Render(compactCodec(m.renderState.AudioCodec))
+	if audioCodec != "" {
+		audio := valueStyle.Render(compactCodec(audioCodec))
 		if codec != "" {
 			codec = lipgloss.JoinHorizontal(lipgloss.Top, codec, valueStyle.Render(" · "), audio)
 		} else {

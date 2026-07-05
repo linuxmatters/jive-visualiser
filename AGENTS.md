@@ -19,20 +19,23 @@
 - Memory-efficient: ~50MB footprint for 30-minute audio vs 600MB for single-pass
 
 ### Key Modules
-- `cmd/jive-visualiser/main.go` — CLI entry, 2-pass coordinator
+- `cmd/jive-visualiser/main.go` - CLI entry and Pass 1 coordinator
+- `cmd/jive-visualiser/pass2.go` - Pass 2 rendering and encoding runner
 - `internal/audio/` — `StreamingReader` (reader.go) chunk-based decode, FFT analysis
-- `internal/encoder/` — ffmpeg-statigo wrapper, RGB→YUV conversion, FIFO buffer
-- `internal/yuv/` — YCbCr coefficients, `RGBToY`/`RGBToCb`/`RGBToCr`, `ParallelRows`
+- `internal/encoder/` - ffmpeg-statigo muxer facade, video/audio helpers, RGB→YUV conversion, FIFO buffer
+- `internal/yuv/` - YCbCr coefficients, `RGBToY`/`RGBToCb`/`RGBToCr`, `ParallelRows`, `RowPool`
 - `internal/renderer/` — Frame generation, bar drawing, thumbnail
-- `internal/ui/` — Bubbletea v2 TUI (unified progress.go for both passes)
+- `internal/ui/` - Bubbletea v2 TUI state, spectrum, preview, and summary views
 - `internal/config/` — Constants (dimensions, FFT params, colours)
+- `internal/theme/` - Terminal colour theme
+- `internal/cli/` - Kong CLI helpers and styled help
 
 ## FFmpeg Integration
 
 - All FFmpeg access through `third_party/ffmpeg-statigo` submodule (FFmpeg 8.0 static bindings)
 - `*.gen.go` files in submodule are auto-generated — do not edit
 - Audio decoding: `internal/audio/reader.go` — `NewStreamingReader` returns `*StreamingReader`
-- Video/audio encoding: `internal/encoder/encoder.go` wraps libx264/AAC
+- Video/audio encoding: `internal/encoder/encoder.go` exposes the public facade; `audio_encoder.go` and `video_encoder.go` own codec setup
 
 ## Charm TUI (v2)
 
@@ -49,11 +52,11 @@
 - FFT size: 2048 samples (Hanning window)
 - 64 frequency bars with linear (uniform) frequency binning; logarithmic scaling applies to amplitude only
 - Harmonica spring peak-hold bar dynamics: each bar rises instantly to any new peak, then springs back toward the live level. Spring params: frequency `6.0`, damping `1.0`, delta `1/FPS`, gain `2.0` (replaces the amplitude lift the old CAVA integrator provided)
-- Audio frame size mismatch handled by FFmpeg's `AVAudioFifo` (in `internal/encoder/encoder.go`; FFT needs 2048, AAC expects 1024)
+- Audio frame size mismatch handled by FFmpeg's `AVAudioFifo` (in `internal/encoder/audio_encoder.go`; FFT needs 2048, AAC expects 1024)
 
 ## Performance Patterns
 
-- RGB→YUV conversion in `encoder/frame.go` parallelised across CPU cores via `yuv.ParallelRows` (13.2× faster than swscale)
+- RGB→YUV conversion in `encoder/frame.go` parallelised across CPU cores via `yuv.RowPool` (13.2× faster than swscale)
 - `convertRGBAToYUV` (YUV420P) and `convertRGBAToNV12` (NV12) in `encoder/frame.go` are intentionally kept as separate functions despite near-identical structure — the hot-path duplication avoids a callback/interface indirection that would hurt throughput; do not refactor into a shared helper (shared low-level primitives live in `internal/yuv`)
 - Frame rendering uses symmetric mirroring (draw 1/4 pixels, mirror 3×)
 - Pre-computed intensity/colour tables in `renderer/frame.go`
@@ -84,7 +87,8 @@
 - Gradient/alpha tables: pre-computed in `NewFrame()`
 
 ### Changing UI output
-- Unified progress UI: `internal/ui/progress.go` (handles both passes)
+- Progress UI state: `internal/ui/progress.go` (handles both passes)
+- Spectrum and completion helpers: `internal/ui/spectrum.go`, `internal/ui/summary.go`
 - Message types: `AnalysisProgress`, `AnalysisComplete`, `RenderProgress`, `RenderComplete`
 - Audio profile display persists from Pass 1 through Pass 2
 - Video preview: `internal/ui/preview.go`

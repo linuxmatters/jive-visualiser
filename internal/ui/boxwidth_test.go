@@ -55,8 +55,8 @@ func boxWidthFixture(t *testing.T, width int) *Model {
 		BarHeights:  bars,
 		FrameData:   image.NewRGBA(image.Rect(0, 0, 1920, 1080)),
 	}
-	for i := range m.spectrumPos {
-		m.spectrumPos[i] = 0.5
+	for i := range m.spectrum.positions {
+		m.spectrum.positions[i] = 0.5
 	}
 	// Prime the speed sparkline and the Pass 2 wall clock so the gauge cards,
 	// sparkline, meters and frame/source line all render with real content.
