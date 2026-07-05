@@ -83,7 +83,7 @@ func (r *pass2Runner) sendProgressIfDue(frameNum int, img *image.RGBA, interval 
 
 	r.lastProgressUpdate = now
 	elapsed := now.Sub(r.renderStartTime)
-	preview, previewFrame := r.previewPayloadIfDue(frameNum, img, now, previewUpdateInterval)
+	preview, previewFrame := r.previewPayloadIfDue(frameNum, img, now)
 	r.p.Send(r.renderProgressMessage(frameNum, preview, previewFrame, elapsed, r.currentOutputFileSize()))
 }
 
@@ -241,8 +241,8 @@ func (r *pass2Runner) setupRenderState() {
 	r.rearrangedHeights = make([]float64, config.NumBars)
 }
 
-func (r *pass2Runner) previewPayloadIfDue(frameNum int, img *image.RGBA, now time.Time, interval time.Duration) (string, int) {
-	if r.cfg.noPreview || img == nil || !r.previewDue(now, interval) {
+func (r *pass2Runner) previewPayloadIfDue(frameNum int, img *image.RGBA, now time.Time) (string, int) {
+	if r.cfg.noPreview || img == nil || !r.previewDue(now, previewUpdateInterval) {
 		return "", 0
 	}
 

@@ -6,46 +6,39 @@ import (
 	"strings"
 )
 
-// Video settings
 const (
-	Width  = 1280 // Output frame width in pixels
-	Height = 720  // Output frame height in pixels
-	FPS    = 30   // Output frames per second
+	Width  = 1280
+	Height = 720
+	FPS    = 30
 )
 
-// Audio settings
 const (
 	// SampleRate is the reference/default audio sample rate in Hz. The encoder
 	// and per-frame sample budget use the input file's actual rate
 	// (reader.SampleRate()); this constant is a documented default used for
 	// synthetic test signals and as a fallback reference.
 	SampleRate = 44100
-	FFTSize    = 2048 // FFT window size in samples; power of two for a fast transform
+	FFTSize    = 2048 // Power of two for a fast transform.
 )
 
-// Visualisation settings
 const (
-	NumBars      = 64   // Frequency bars across the width
-	BarWidth     = 12   // Bar width in pixels
-	BarGap       = 8    // Gap between bars in pixels
-	CenterGap    = 100  // Vertical gap in pixels between top and bottom bar sections
-	MaxBarHeight = 0.50 // Maximum bar height as fraction of available space
+	NumBars      = 64
+	BarWidth     = 12
+	BarGap       = 8
+	CenterGap    = 100
+	MaxBarHeight = 0.50
 )
 
-// Bar dynamics constants
 const (
 	Framerate = float64(FPS)
 
-	// Auto-sensitivity adjustment constants
-	// These control dynamic gain adjustment based on peak detection
 	SensitivityDecay   = 0.985 // Multiplier when overshoot detected (1.5% reduction per frame)
 	SensitivityGrowth  = 1.002 // Multiplier when no overshoot (0.2% increase per frame)
-	SensitivityMin     = 0.05  // Minimum sensitivity floor
-	SensitivityMax     = 2.0   // Maximum sensitivity ceiling
-	OvershootThreshold = 1.0   // Threshold for soft knee compression
+	SensitivityMin     = 0.05
+	SensitivityMax     = 2.0
+	OvershootThreshold = 1.0 // Threshold for soft knee compression
 )
 
-// Appearance - Visual styling configuration.
 // Embedded assets live in internal/renderer/assets/. Runtime overrides for
 // colours and image paths are applied via RuntimeConfig.
 const (
@@ -60,24 +53,17 @@ const (
 	TextColorG = 179
 	TextColorB = 29
 
-	// Embedded asset paths (relative to internal/renderer/assets/)
-	// Background image: bg.png - scaled to video resolution (1280x720)
-	// Thumbnail image: thumb.png - used as base for thumbnail generation
+	// Embedded asset paths are relative to internal/renderer/assets/.
 	BackgroundImageAsset = "assets/bg.png"
 	ThumbnailImageAsset  = "assets/thumb.png"
 
-	// Embedded font paths (relative to internal/renderer/assets/)
-	// Video title font: Poppins-Regular.ttf - used for video overlay text
-	// Thumbnail font: Poppins-Bold.ttf - used for thumbnail generation
 	VideoTitleFontAsset = "assets/Poppins-Regular.ttf"
 	ThumbnailFontAsset  = "assets/Poppins-Bold.ttf"
 
-	// Thumbnail layout
-	ThumbnailMargin              = 30  // Margin in pixels from edges for thumbnail text
-	ThumbnailTextRotationDegrees = 3.0 // Rotation angle for thumbnail text (degrees, clockwise)
+	ThumbnailMargin              = 30
+	ThumbnailTextRotationDegrees = 3.0
 
-	// Video overlay
-	FramingLineHeight = 4 // Height in pixels of framing lines above/below center gap
+	FramingLineHeight = 4
 )
 
 // OptionalColor is an RGB colour that records whether it was explicitly set.
@@ -90,11 +76,9 @@ type OptionalColor struct {
 // RuntimeConfig holds optional runtime overrides for customisation.
 // When fields are unset or empty, the defaults from the constants above are used.
 type RuntimeConfig struct {
-	// Optional colour overrides (apply only when Set is true)
 	BarColor  OptionalColor
 	TextColor OptionalColor
 
-	// Optional image path overrides
 	BackgroundImagePath string
 	ThumbnailImagePath  string
 }
