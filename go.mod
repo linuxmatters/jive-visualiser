@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/harmonica v0.2.0
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0
 	github.com/linuxmatters/ffmpeg-statigo v0.0.0-00010101000000-000000000000
-	github.com/lucasb-eyer/go-colorful v1.4.0
+	github.com/lucasb-eyer/go-colorful v1.4.1
 	golang.org/x/image v0.44.0
 )
 
