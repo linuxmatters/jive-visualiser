@@ -46,7 +46,7 @@ Your podcast audio deserves more than a static image on YouTube. Jive Visualiser
 ### Example
 
 <div align="center">
-  <a href="https://www.youtube.com/watch?v=VPJEQhdaXrk" target="_blank">
+  <a href="https://video.linuxmatters.net/w/4whYe7wNzcSr3dWL98zMTp" target="_blank">
     <img alt="Linux Matters: Episode 65 (macOS Made Me Snap)" src=".github/thumbnail.png" width="640">
   </a>
 </div>
