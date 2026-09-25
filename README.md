@@ -60,10 +60,20 @@ Jive Visualiser uses [FFmpeg statigo](https://github.com/linuxmatters/ffmpeg-sta
 just setup
 
 # Build and test
-just build        # Build binary
-just test         # Run tests
-just test-encoder # Test encoder
+just build        # Build managed binaries, then the versioned root binary
+just test         # Run full vet and tests with console coverage
+just lint         # Check modules, formatting, source, vulnerabilities and workflows
+just lint correct # Explicitly tidy modules and format source
+just test-encoder # Run the separate audio/video checks
 ```
+
+Go tooling uses Tailor with CGO enabled. `just setup` is explicit. It can update Git configuration, submodules, archives and the index, and use the network. Quality commands never run setup.
+
+The existing `.golangci.yml` remains the project policy. `just/project/build.sh` retains version injection and the root binary. Benchmarks, `test-encoder`, and `vhs` remain separate commands. `just release x.y.z` retains unprefixed release tags.
+
+Review the generated `nix/` files before staging them. Git-backed flakes exclude untracked files. The shell watches Nix package and hook files, but reload remains manual.
+
+On NixOS, graphics hooks retain application libraries before host libraries without duplicate paths. They preserve explicit `ONEVPL_SEARCH_PATH`, `LIBVA_DRIVERS_PATH` and `VK_DRIVER_FILES` values, including empty values. Set `TAILOR_NIXOS_DRIVERS=0` to disable driver hooks. GPU detection no longer runs in the shell. Set `LIBVA_DRIVER_NAME` explicitly when driver selection is necessary. For Intel, use `iHD` and include the Intel package's `lib/dri` directory in `LIBVA_DRIVERS_PATH` when host drivers do not provide it.
 
 ## Why Jive Visualiser?
 

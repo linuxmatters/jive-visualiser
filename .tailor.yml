@@ -1,6 +1,12 @@
 # Initially fitted by tailor on 2026-03-19
 license: GPL-3.0
 
+languages:
+  go:
+    enabled: true
+    cgo: true
+    ffmpeg-statigo: true
+
 repository:
   description: Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies ✨
   homepage: https://linuxmatters.sh
@@ -79,8 +85,8 @@ labels:
     description: Hacktoberfest contribution
 
 swatches:
-  - path: .github/workflows/tailor.yml
-    alteration: never
+  - path: .golangci.yml
+    alteration: first-fit
 
   - path: .github/dependabot.yml
     alteration: first-fit
@@ -129,6 +135,3 @@ swatches:
 
   - path: .tailor.yml
     alteration: always
-
-  - path: .github/workflows/tailor-automerge.yml
-    alteration: never
