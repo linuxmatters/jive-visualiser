@@ -1,3 +1,6 @@
 .direnv
 /jive-visualiser
 testdata/
+/artifacts/
+/dist/
+/result

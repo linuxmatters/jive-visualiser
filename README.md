@@ -2,7 +2,7 @@
 
 > Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies.
 
-_Formerly known as Jivefire._
+_Formerly known as Jivefire._ Website: [linuxmatters.sh/jive/visualiser](https://linuxmatters.sh/jive/visualiser/)
 
 ## The Groove
 
@@ -23,6 +23,28 @@ Your podcast audio deserves more than a static image on YouTube. Jive Visualiser
 - 📦 **Single binary** No Python. No FFmpeg install required. Just drop and render
   - 🐧 **Linux** (amd64 and AArch64)
   - 🍏 **macOS** (x86 and Apple Silicon)
+
+## Install
+
+| | Platform | Repository |
+| :-: | --- | --- |
+| <img src="https://apt.wimpys.world/logo.svg" width="32" height="32" alt=""> | Debian and Ubuntu | [apt.wimpys.world](https://apt.wimpys.world/#jive-visualiser) |
+| <img src="https://rpm.wimpys.world/logo.svg" width="32" height="32" alt=""> | Fedora and openSUSE | [rpm.wimpys.world](https://rpm.wimpys.world/#jive-visualiser) |
+| <img src="https://pkg.wimpys.world/logo.svg" width="32" height="32" alt=""> | Arch Linux | [pkg.wimpys.world](https://pkg.wimpys.world/#jive-visualiser) |
+| <img src="https://brew.wimpys.world/logo.svg" width="32" height="32" alt=""> | macOS (Homebrew) | [brew.wimpys.world](https://brew.wimpys.world/#jive-visualiser) |
+| <img src="https://nix.wimpys.world/logo.svg" width="32" height="32" alt=""> | Nix and NixOS | [nix.wimpys.world](https://nix.wimpys.world/#jive-visualiser) |
+
+Each repository is signed, and its page gives the setup steps and keeps Jive Visualiser up to date.
+
+The Linux packages need glibc 2.38 or later, for example Ubuntu 24.04, Debian 13, or Fedora 39.
+
+### Linux and macOS
+
+[bin](https://github.com/marcosnils/bin) installs and updates the release binary:
+
+```shell
+bin install github.com/linuxmatters/jive-visualiser
+```
 
 ## Usage
 
