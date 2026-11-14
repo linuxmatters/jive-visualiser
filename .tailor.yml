@@ -9,7 +9,7 @@ languages:
 
 repository:
   description: Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies ✨
-  homepage: https://linuxmatters.sh
+  homepage: https://linuxmatters.sh/jive/visualiser/
   has_wiki: false
   has_discussions: false
   has_projects: false
