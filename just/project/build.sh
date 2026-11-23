@@ -10,6 +10,7 @@ if [ ! -f "third_party/ffmpeg-statigo/lib/$(go env GOOS)_$(go env GOARCH)/libffm
     exit 1
 fi
 
-VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION=$(git describe --tags --match 'v*.*.*' --always --dirty 2>/dev/null || echo "dev")
+VERSION="${VERSION#v}"
 echo "Building jive-visualiser version: $VERSION"
-CGO_ENABLED=1 go build -ldflags="-X main.version=$VERSION" -o jive-visualiser ./cmd/jive-visualiser
+CGO_ENABLED=1 go build -trimpath -ldflags="-X main.version=$VERSION" -o jive-visualiser ./cmd/jive-visualiser
