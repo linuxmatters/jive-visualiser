@@ -143,7 +143,7 @@ The Jive Visualiser architecture is documented in [docs/ARCHITECTURE.md](docs/AR
 
 <!-- tailor:social-stars:start -->
 <p align="center">
-  <a href="https://github.com/linuxmatters/jive-visualiser/stargazers"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/stars-dark.svg"><img src="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/stars-light.svg" alt="Jive Visualiser star history"></picture></a>
+  <a href="https://github.com/linuxmatters/jive-visualiser"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/stars-dark.svg"><img src="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/stars-light.svg" alt="Jive Visualiser star history"></picture></a>
 </p>
 <!-- tailor:social-stars:end -->
 
