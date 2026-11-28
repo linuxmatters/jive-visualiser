@@ -139,6 +139,7 @@ pages:
     mastodon: "https://ubuntu.social/@linuxmatters"
     linkedin: https://linkedin.com/in/martinwimpress
     discord: https://discord.com/invite/vUsydfP
+    telegram: https://t.me/joinchat/Plfd07auVLayNLBD
     podcast: https://linuxmatters.sh
     github_sponsors: https://github.com/sponsors/flexiondotorg
   # branch: main
@@ -164,7 +165,7 @@ social:
       - bluesky
       - mastodon
       - linkedin
-    community: auto
+    community: telegram
     packages:
       - apt
       - rpm
