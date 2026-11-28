@@ -3,14 +3,12 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    tailor.url = "github:wimpysworld/tailor/latest";
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      tailor,
       ...
     }:
     let
@@ -45,8 +43,6 @@
             inherit system;
             overlays = [ (final: prev: { go = prev.go_1_26; }) ];
           };
-          # Keep the development shell available when Tailor has no package for this system.
-          tailorPkgs = tailor.packages.${system} or { };
         in
         {
           default = pkgs.mkShell {
@@ -78,7 +74,6 @@
                 intel-media-driver # VA-API driver for Intel GPUs (iHD_drv_video.so)
                 vpl-gpu-rt # oneVPL runtime for Intel GPUs (QSV backend)
               ]
-              ++ (if tailorPkgs ? tailor then [ tailorPkgs.tailor ] else [ ])
               ++ import ./nix/loader.nix { inherit pkgs; };
 
             shellHook =
