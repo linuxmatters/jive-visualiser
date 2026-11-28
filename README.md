@@ -1,69 +1,105 @@
-# Jive Visualiser ✨
+<!-- tailor:social-header:start -->
+<p align="center">
+  <a href="https://linuxmatters.sh/jive/visualiser/"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/hero-dark.svg"><img src="pages/social/hero-light.svg" alt="Jive Visualiser"></picture></a>
+</p>
+<!-- tailor:social-header:end -->
 
-> Spin your podcast .wav into a groovy MP4 visualiser with spring-driven real-time audio frequencies.
+<!-- tailor:social-links:start -->
+<p align="center">
+  <a href="https://bsky.app/profile/linuxmatters.sh"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/link-bluesky-dark.svg"><img src="pages/social/link-bluesky-light.svg" alt="Bluesky"></picture></a>
+  <a href="https://ubuntu.social/@linuxmatters"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/link-mastodon-dark.svg"><img src="pages/social/link-mastodon-light.svg" alt="Mastodon"></picture></a>
+  <a href="https://linkedin.com/in/martinwimpress"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/link-linkedin-dark.svg"><img src="pages/social/link-linkedin-light.svg" alt="LinkedIn"></picture></a>
+</p>
+<!-- tailor:social-links:end -->
 
-_Formerly known as Jivefire._ Website: [linuxmatters.sh/jive/visualiser](https://linuxmatters.sh/jive/visualiser/)
+<!-- tailor:social-community:start -->
+<p align="center">
+  <a href="https://discord.com/invite/vUsydfP"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/community-dark.svg"><img src="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/community-light.svg" alt="Discord community"></picture></a>
+</p>
+<!-- tailor:social-community:end -->
 
-## The Groove
+Jive Visualiser transforms WAV, MP3, or FLAC podcast audio into 720p visualiser videos with spring-driven real-time audio frequency bars. Formerly known as Jivefire. Website: [linuxmatters.sh/jive/visualiser](https://linuxmatters.sh/jive/visualiser/).
 
-Your podcast audio deserves more than a static image on YouTube. Jive Visualiser transforms WAV/MP3/FLAC into delightful 720p visuals—bars that breathe with your dialogue, rise with your laughter, and groove through every frequency.
+Your podcast audio deserves more than a static image on YouTube. Jive Visualiser turns recordings into discrete frequency bars that breathe with your dialogue, rise with your laughter, and groove through every frequency.
 
-<div align="center"><img alt="Jive Visualiser Demo" src=".github/jive-visualiser.gif" width="860" /></div>
+## Features
 
-### What's Cooking
+- 🖼️ **Thumbnail generator**: YouTube-style PNG with your title, saved alongside the video.
+- 🎬 **1280×720 at 30 fps**: H.264/AAC YouTube-ready MP4, no questions asked.
+  - 🎚️ **64 discrete frequency bars**: crisp bars rather than a smeared spectrum.
+  - 🪞 **Symmetric mirroring**: mirrored above and below centre to double the visual impact.
+  - 🔬 **FFT-based analysis**: 2048-point Hanning window, linear frequency binning, and log-scaled amplitude.
+  - ✨ **Spring-driven bar dynamics**: bars snap up immediately and spring back down with harmonica peak-hold.
+- 🚀 **Streaming pipeline**: parallel RGB-to-YUV conversion with automatic GPU acceleration (NVENC, Vulkan, VA-API, QuickSync, VideoToolbox).
+- 📦 **Single binary**: no Python and no separate FFmpeg installation required on Linux (`amd64`, `arm64`) or macOS (`x86_64`, Apple Silicon).
 
-- 🖼️ **Thumbnail generator** YouTube-style PNG with your title, saved alongside the video
-- 🎬 **1280×720 @ 30fps** H.264/AAC YouTube-ready MP4, no questions asked
-  - 🎚️ **64 frequency bars** that look discrete (not that smeared spectrum nonsense)
-  - 🪞 **Symmetric mirroring** above and below centre, doubles the visual impact
-  - 🔬 **FFT-based analysis** 2048-point Hanning window, linear frequency binning, log-scaled amplitude
-  - ✨ **Spring-driven bar dynamics** bars snap up instantly, spring back down via harmonica peak-hold
-- 🚀 **Stupidly fast** streaming pipeline, parallel RGB→YUV conversion
-  - ⚡ **GPU acceleration** auto-detected: NVENC, Vulkan, VA-API, QuickSync, VideoToolbox
-- 📦 **Single binary** No Python. No FFmpeg install required. Just drop and render
-  - 🐧 **Linux** (amd64 and AArch64)
-  - 🍏 **macOS** (x86 and Apple Silicon)
+<!-- tailor:social-stats:start -->
+<p align="center">
+  <a href="https://github.com/linuxmatters/jive-visualiser/pulse"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/stats-dark.svg"><img src="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/stats-light.svg" alt="Jive Visualiser statistics"></picture></a>
+</p>
+<!-- tailor:social-stats:end -->
 
 ## Install
 
-| | Platform | Repository |
-| :-: | --- | --- |
-| <img src="https://apt.wimpys.world/logo.svg" width="32" height="32" alt=""> | Debian and Ubuntu | [apt.wimpys.world](https://apt.wimpys.world/#jive-visualiser) |
-| <img src="https://rpm.wimpys.world/logo.svg" width="32" height="32" alt=""> | Fedora and openSUSE | [rpm.wimpys.world](https://rpm.wimpys.world/#jive-visualiser) |
-| <img src="https://pkg.wimpys.world/logo.svg" width="32" height="32" alt=""> | Arch Linux | [pkg.wimpys.world](https://pkg.wimpys.world/#jive-visualiser) |
-| <img src="https://brew.wimpys.world/logo.svg" width="32" height="32" alt=""> | macOS (Homebrew) | [brew.wimpys.world](https://brew.wimpys.world/#jive-visualiser) |
-| <img src="https://nix.wimpys.world/logo.svg" width="32" height="32" alt=""> | Nix and NixOS | [nix.wimpys.world](https://nix.wimpys.world/#jive-visualiser) |
+First-party signed package repositories are published for Linux and macOS through [wimpys.world](https://wimpys.world/). Choose your platform below for setup instructions and automatic updates.
 
-Each repository is signed, and its page gives the setup steps and keeps Jive Visualiser up to date.
+<!-- tailor:social-packages:start -->
+<p align="center">
+  <a href="https://apt.wimpys.world/#jive-visualiser"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/pkg-apt-dark.svg"><img src="pages/social/pkg-apt-light.svg" alt="Debian and Ubuntu"></picture></a>
+  <a href="https://rpm.wimpys.world/#jive-visualiser"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/pkg-rpm-dark.svg"><img src="pages/social/pkg-rpm-light.svg" alt="Fedora and openSUSE"></picture></a>
+  <a href="https://pkg.wimpys.world/#jive-visualiser"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/pkg-pkg-dark.svg"><img src="pages/social/pkg-pkg-light.svg" alt="Arch Linux"></picture></a>
+  <br>
+  <a href="https://brew.wimpys.world/#jive-visualiser"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/pkg-brew-dark.svg"><img src="pages/social/pkg-brew-light.svg" alt="macOS (Homebrew)"></picture></a>
+  <a href="https://nix.wimpys.world/#jive-visualiser"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/pkg-nix-dark.svg"><img src="pages/social/pkg-nix-light.svg" alt="Nix and NixOS"></picture></a>
+</p>
+<!-- tailor:social-packages:end -->
 
 The Linux packages need glibc 2.38 or later, for example Ubuntu 24.04, Debian 13, or Fedora 39.
 
-### Linux and macOS
+<details>
+<summary><strong>Any platform (<code>bin</code>)</strong> - install and update the release binary directly</summary>
 
-[bin](https://github.com/marcosnils/bin) installs and updates the release binary:
+[bin](https://github.com/marcosnils/bin) installs and updates the release binary on Linux and macOS:
 
 ```shell
 bin install github.com/linuxmatters/jive-visualiser
 ```
 
-## Usage
+</details>
 
-### Generate Video
+<!-- tailor:social-sponsors:start -->
+<p align="center">
+  <a href="https://github.com/sponsors/flexiondotorg"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/sponsors-dark.svg"><img src="pages/social/sponsors-light.svg" alt="Jive Visualiser sponsors"></picture></a>
+</p>
+<!-- tailor:social-sponsors:end -->
+
+## Quick start
+
+### Generate video
+
 ```bash
-./jive-visualiser input.wav output.mp4
+jive-visualiser input.wav output.mp4
 ```
 
-### With Episode Number and Title
+### With episode number and title
+
 ```bash
-./jive-visualiser --episode=42 --title="Linux Matters" input.wav output.mp4
+jive-visualiser --episode=42 --title="Linux Matters" input.wav output.mp4
 ```
 
-### Without Episode Number (Unnumbered Audio)
+### Without episode number (unnumbered audio)
+
 ```bash
-./jive-visualiser --title="Linux Matters" input.wav output.mp4
+jive-visualiser --title="Linux Matters" input.wav output.mp4
 ```
 
-`--episode` is optional. Omitting it suppresses the episode number overlay entirely — useful for archive or bonus audio that has no episode number. Passing `--episode=0` still renders `00` on-screen (single-digit values are zero-padded, so `5` renders as `05`); absence is what controls the overlay, not the value.
+<!-- tailor:social-demo:start -->
+<p align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/demo-dark.svg"><img src="pages/social/demo-light.svg" alt="Jive Visualiser demo"></picture>
+</p>
+<!-- tailor:social-demo:end -->
+
+`--episode` is optional. Omitting it suppresses the episode number overlay completely, which suits archive or bonus audio with no episode number. Passing `--episode=0` still renders `00` on-screen (single-digit values are zero-padded, so `5` renders as `05`).
 
 ### Example
 
@@ -91,7 +127,7 @@ just test-encoder # Run the separate audio/video checks
 
 Go tooling uses Tailor with CGO enabled. `just setup` is explicit. It can update Git configuration, submodules, archives and the index, and use the network. Quality commands never run setup.
 
-The existing `.golangci.yml` remains the project policy. `just/project/build.sh` retains version injection and the root binary. Benchmarks, `test-encoder`, and `vhs` remain separate commands. `just release x.y.z` retains unprefixed release tags.
+The existing `.golangci.yml` remains the project policy. `just/project/build.sh` retains version injection and the root binary. Benchmarks and `test-encoder` remain separate commands. `just release x.y.z` retains unprefixed release tags.
 
 Review the generated `nix/` files before staging them. Git-backed flakes exclude untracked files. The shell watches Nix package and hook files, but reload remains manual.
 
@@ -99,8 +135,26 @@ On NixOS, graphics hooks retain application libraries before host libraries with
 
 ## Why Jive Visualiser?
 
-FFmpeg's audio visualisation filters (`showfreqs`, `showspectrum`) render continuous frequency spectra, not discrete bars. No amount of FFmpeg filter chain kung-fu can achieve the discrete 64-bar aesthetic required for Linux Matters branding. Solution: Do the FFT analysis and bar rendering in Go, pipe frames to FFmpeg for encoding.
+FFmpeg's audio visualisation filters (`showfreqs`, `showspectrum`) render continuous frequency spectra, not discrete bars. No amount of FFmpeg filter chain tuning achieves the discrete 64-bar aesthetic required for Linux Matters branding. Jive Visualiser does the FFT analysis and bar rendering in Go, then pipes frames to FFmpeg for encoding.
 
-**Why Go over Python?** The original `djfun/audio-visualizer-python` tool is a moribund Qt5 GUI with significant tech debt. For our podcast production needs we wanted multi-architecture tools that can integrate into automation pipelines.
+**Why Go over Python?** The original `djfun/audio-visualizer-python` tool is a moribund Qt5 GUI with significant tech debt. For our podcast production needs we wanted multi-architecture tools that integrate into automation pipelines.
 
-The Jive Visualiser architecture, such as it is, is available in the [architecture document](docs/ARCHITECTURE.md).
+The Jive Visualiser architecture is documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+<!-- tailor:social-stars:start -->
+<p align="center">
+  <a href="https://github.com/linuxmatters/jive-visualiser/stargazers"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/stars-dark.svg"><img src="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/stars-light.svg" alt="Jive Visualiser star history"></picture></a>
+</p>
+<!-- tailor:social-stars:end -->
+
+<!-- tailor:social-contributors:start -->
+<p align="center">
+  <a href="https://github.com/linuxmatters/jive-visualiser/graphs/contributors"><picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/contributors-dark.svg"><img src="https://raw.githubusercontent.com/linuxmatters/jive-visualiser/social-assets/contributors-light.svg" alt="Jive Visualiser contributors"></picture></a>
+</p>
+<!-- tailor:social-contributors:end -->
+
+<!-- tailor:social-footer:start -->
+<p align="center">
+  <a href="https://tailor.wimpys.world"><picture><source media="(prefers-color-scheme: dark)" srcset="pages/social/footer-dark.svg"><img src="pages/social/footer-light.svg" alt="Fitted by Tailor"></picture></a>
+</p>
+<!-- tailor:social-footer:end -->

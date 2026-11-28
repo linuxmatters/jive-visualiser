@@ -125,11 +125,6 @@ bench-encoders: build
     echo ""
     echo "Results saved to testdata/bench-encoders.md"
 
-# Record gif
-vhs: build
-    # unset LD_LIBRARY_PATH to avoid ttyd/libwebsockets conflicts with GPU drivers
-    @env -u LD_LIBRARY_PATH vhs ./jive-visualiser.tape
-
 # Show current version (from git tags or "dev" if no tags)
 version:
     @git describe --tags --always --dirty 2>/dev/null || echo "dev"
